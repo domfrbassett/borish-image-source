@@ -133,7 +133,7 @@ function averageAbsorption(value, fallback = 0.05) {
 
 function readAirOptions() {
   return {
-    enabled: document.getElementById("airAttenuationEnabled")?.checked ?? true,
+    enabled: true,
     temperature_c: Number(document.getElementById("airTemperatureC")?.value ?? 20),
     relative_humidity_percent: Number(document.getElementById("airRelativeHumidity")?.value ?? 50),
     pressure_kpa: Number(document.getElementById("airPressureKPa")?.value ?? 101.325),
@@ -187,7 +187,9 @@ function airAbsorptionDbPerMISO9613(frequencyHz, temperatureC = 20, relativeHumi
 function airAbsorptionDbPerMByBand() {
   const air = readAirOptions();
 
-  if (!air.enabled) return OCTAVE_BANDS_HZ.map(() => 0);
+  if (!air.enabled) {
+    return OCTAVE_BANDS_HZ.map(() => 0);
+  }
 
   return OCTAVE_BANDS_HZ.map((frequencyHz) =>
     airAbsorptionDbPerMISO9613(
