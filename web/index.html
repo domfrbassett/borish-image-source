@@ -52,7 +52,7 @@
       
 
       <h2>3. Surface material</h2>
-      <p class="hint">Click a surface in the 3D viewer, then rename it and assign octave-band absorption plus scattering. Apply connected plane groups coplanar triangles that share edges, so a triangulated wall can be named and edited once.</p>
+      <p class="hint">Click a surface in the 3D viewer, then rename it and assign octave-band absorption. Selecting 'apply connected plane' groups coplanar triangles that share edges, so a triangulated wall can be named and edited once.</p>
       <div id="surfaceStatus" class="surface-status">No surface selected.</div>
       <div class="settings surface-settings">
         <label>Wall / plane name <input id="surfaceName" type="text" placeholder="e.g. North wall"></label>
@@ -68,7 +68,6 @@
           <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">4k</span><span class="abs-band-unit">Hz</span></span><input id="surfaceAbsorption4000" type="number" min="0" max="1" step="0.01" value="0.05"></label>
           <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">8k</span><span class="abs-band-unit">Hz</span></span><input id="surfaceAbsorption8000" type="number" min="0" max="1" step="0.01" value="0.05"></label>
         </div>
-        <label>Surface scattering <input id="surfaceScattering" type="number" min="0" max="1" step="0.01" value="0.00"></label>
       </div>
       <div class="button-row surface-actions">
         <button id="applySurfaceSelected" disabled>Apply selected</button>
@@ -77,7 +76,6 @@
         <button id="applySurfaceAll" disabled>Apply all surfaces</button>
         <button id="clearSurfaceSelection" disabled>Clear selection</button>
       </div>
-      <p class="hint">Scattering is applied as loss from the specular reflection coefficient.</p>
 
       <h2>4. Simulation</h2>
       <div class="settings">
@@ -88,11 +86,6 @@
 
         <fieldset class="air-attenuation-box">
           <legend>Air attenuation</legend>
-
-          <label>
-            <input id="airAttenuationEnabled" type="checkbox" checked>
-            Apply frequency-dependent air absorption
-          </label>
 
           <label>
             Temperature, °C
@@ -109,9 +102,6 @@
             <input id="airPressureKPa" type="number" step="0.001" value="101.325">
           </label>
 
-          <p class="hint">
-            Uses a frequency-dependent air absorption model. Mainly affects long paths and high frequencies.
-          </p>
         </fieldset>
 
         <label>Max nodes <input id="maxNodes" type="number" min="1" value="250000"></label>
