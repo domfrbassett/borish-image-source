@@ -552,16 +552,6 @@ textarea {
   color: #ffd36e !important;
 }
 
-#fftCanvas {
-  width: 100%;
-  height: 220px;
-  display: block;
-  border: 1px solid var(--line);
-  background: #0c1117;
-  margin-top: 10px;
-  border-radius: 0;
-}
-
 /* IR and FFT plot sizing */
 .ir-panel {
   min-height: 560px !important;
