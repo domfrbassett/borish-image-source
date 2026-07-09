@@ -1005,10 +1005,8 @@ function computeMagnitudeSpectrumDb(sparse, sampleRate) {
   return mags;
 }
 
-function smoothSpectrumFractionalOctave(spectrum, bandsPerOctave = 3) {
-  if (!Array.isArray(spectrum) || spectrum.length < 3) {
-    return spectrum || [];
-  }
+function smoothSpectrumFractionalOctave(spectrum, bandsPerOctave = 3, outputPointCount = 220) {
+  if (!Array.isArray(spectrum) || spectrum.length < 3) return spectrum || [];
 
   const points = spectrum
     .map((point) => ({
@@ -1024,58 +1022,55 @@ function smoothSpectrumFractionalOctave(spectrum, bandsPerOctave = 3) {
 
   if (points.length < 3) return points;
 
-  // For 1/3-octave smoothing, each point averages over:
-  // f / 2^(1/6) to f * 2^(1/6)
+  const minF = Math.max(20, points[0].frequency);
+  const maxF = Math.min(20000, points[points.length - 1].frequency);
+
   const halfOctaveWidth = 1 / (2 * bandsPerOctave);
   const lowerFactor = Math.pow(2, -halfOctaveWidth);
   const upperFactor = Math.pow(2, halfOctaveWidth);
 
-  // Convert dB to linear power before averaging.
-  // Do NOT average dB values directly.
-  const prefixPower = [0];
+  const output = [];
 
-  for (const point of points) {
-    const power = Math.pow(10, point.db / 10);
-    prefixPower.push(prefixPower[prefixPower.length - 1] + power);
-  }
+  for (let i = 0; i < outputPointCount; i++) {
+    const t = outputPointCount <= 1 ? 0 : i / (outputPointCount - 1);
+    const centerFrequency = minF * Math.pow(maxF / minF, t);
 
-  const smoothed = [];
-  let lowIndex = 0;
-  let highIndex = 0;
+    const lowFrequency = centerFrequency * lowerFactor;
+    const highFrequency = centerFrequency * upperFactor;
 
-  for (const point of points) {
-    const lowFrequency = point.frequency * lowerFactor;
-    const highFrequency = point.frequency * upperFactor;
+    let powerSum = 0;
+    let count = 0;
 
-    while (lowIndex < points.length && points[lowIndex].frequency < lowFrequency) {
-      lowIndex++;
+    for (const point of points) {
+      if (point.frequency < lowFrequency) continue;
+      if (point.frequency > highFrequency) break;
+
+      // Average linear power, not dB.
+      powerSum += Math.pow(10, point.db / 10);
+      count++;
     }
 
-    while (highIndex < points.length && points[highIndex].frequency <= highFrequency) {
-      highIndex++;
+    if (count > 0) {
+      const meanPower = powerSum / count;
+      output.push({
+        frequency: centerFrequency,
+        db: 10 * Math.log10(Math.max(meanPower, 1e-12)),
+      });
     }
-
-    const count = Math.max(1, highIndex - lowIndex);
-    const meanPower =
-      (prefixPower[highIndex] - prefixPower[lowIndex]) / count;
-
-    smoothed.push({
-      frequency: point.frequency,
-      db: 10 * Math.log10(Math.max(meanPower, 1e-12)),
-    });
   }
 
-  // Re-normalise the smoothed curve so its peak is 0 dB.
-  const maxDb = Math.max(...smoothed.map((point) => point.db), -1e-12);
+  if (!output.length) return [];
 
-  return smoothed.map((point) => ({
+  const maxDb = Math.max(...output.map((point) => point.db));
+
+  return output.map((point) => ({
     frequency: point.frequency,
     db: point.db - maxDb,
   }));
 }
 
 function smoothSpectrumThirdOctave(spectrum) {
-  return smoothSpectrumFractionalOctave(spectrum, 3);
+  return smoothSpectrumFractionalOctave(spectrum, 3, 220);
 }
 
 function renderFftPlot(sparse) {
