@@ -552,66 +552,8 @@ textarea {
   color: #ffd36e !important;
 }
 
-/* IR and FFT plot sizing */
-.ir-panel {
-  min-height: 560px !important;
-  overflow: visible !important;
-}
-
-.plot-canvas,
-#irCanvas,
-#fftCanvas {
-  width: 100% !important;
-  height: 220px !important;
-  min-height: 220px !important;
-  display: block !important;
-  box-sizing: border-box !important;
-  border: 1px solid var(--line) !important;
-  background: #0c1117 !important;
-  border-radius: 0 !important;
-}
-
-#irCanvas {
-  margin-bottom: 14px !important;
-}
-
-#fftCanvas {
-  margin-top: 8px !important;
-}
-
-.plot-subtitle {
-  display: block !important;
-  margin: 14px 0 6px 0 !important;
-  font-size: 0.95rem !important;
-  color: var(--accent) !important;
-  font-weight: 600 !important;
-}
-
-.ir-toolbar {
-  display: flex !important;
-  justify-content: flex-end !important;
-  align-items: center !important;
-  margin: 0 0 10px 0 !important;
-}
-
-.ir-toolbar label {
-  display: flex !important;
-  align-items: center !important;
-  gap: 8px !important;
-  color: var(--muted) !important;
-}
-
-.ir-toolbar select {
-  min-width: 180px !important;
-  height: 36px !important;
-  background: #111a24 !important;
-  color: var(--text) !important;
-  border: 1px solid var(--line) !important;
-  border-radius: 0 !important;
-  padding: 4px 10px !important;
-}
-
 /* ---- Single-window IR/FFT plot toggle ---- */
+
 .ir-panel {
   height: 100% !important;
   min-height: 0 !important;
@@ -625,59 +567,91 @@ textarea {
   display: flex !important;
   justify-content: space-between !important;
   align-items: center !important;
-  gap: 10px !important;
+  gap: 8px !important;
   margin: 0 0 8px 0 !important;
 }
 
 .plot-panel-header h2 {
   margin: 0 !important;
-  min-width: 120px !important;
+  min-width: 0 !important;
+  flex: 1 1 auto !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
 }
 
 .plot-controls {
+  flex: 0 0 auto !important;
   display: flex !important;
   align-items: center !important;
   justify-content: flex-end !important;
-  gap: 8px !important;
+  gap: 4px !important;
   min-width: 0 !important;
 }
 
+/* IR band selector: compact and no visible "IR view" text */
 .ir-toolbar {
   margin: 0 !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
 }
 
 .ir-toolbar.hidden {
   display: none !important;
 }
 
+/* Hides the grey "IR view" label text while keeping the select visible */
 .ir-toolbar label {
   margin: 0 !important;
+  padding: 0 !important;
   display: flex !important;
   align-items: center !important;
-  gap: 8px !important;
-  white-space: nowrap !important;
+  gap: 0 !important;
+  font-size: 0 !important;
+  line-height: 0 !important;
 }
 
+#irBandSelect,
 .ir-toolbar select {
-  min-width: 150px !important;
-  max-width: 160px !important;
-  height: 30px !important;
-  padding: 2px 8px !important;
+  width: 92px !important;
+  min-width: 92px !important;
+  max-width: 92px !important;
+  height: 28px !important;
+  margin: 0 !important;
+  padding: 2px 20px 2px 6px !important;
+
+  font-size: 12px !important;
+  line-height: 1 !important;
+
+  background: #111a24 !important;
+  color: var(--text) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 0 !important;
 }
 
+/* Left/right plot arrows */
 .plot-nav {
   display: flex !important;
   align-items: center !important;
-  gap: 6px !important;
+  gap: 3px !important;
   white-space: nowrap !important;
 }
 
 .plot-nav button {
-  width: 30px !important;
-  height: 30px !important;
+  width: 28px !important;
+  height: 28px !important;
+  min-width: 28px !important;
   padding: 0 !important;
+  margin: 0 !important;
+
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+
   line-height: 1 !important;
-  font-size: 20px !important;
+  font-size: 18px !important;
+  border-radius: 0 !important;
 }
 
 .plot-nav button:disabled {
@@ -685,14 +659,12 @@ textarea {
   cursor: default !important;
 }
 
+/* Hide old IR/Frequency text badge if it still exists in HTML */
 #plotViewName {
-  min-width: 32px !important;
-  text-align: center !important;
-  color: var(--muted) !important;
-  font-size: 12px !important;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace !important;
+  display: none !important;
 }
 
+/* Single shared plot canvas */
 #irCanvas.plot-canvas,
 #irCanvas {
   flex: 1 1 auto !important;
@@ -708,6 +680,7 @@ textarea {
   border-radius: 0 !important;
 }
 
+/* FFT is drawn into the same visible plot window now */
 #fftCanvas,
 .plot-subtitle {
   display: none !important;

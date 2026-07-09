@@ -130,25 +130,21 @@
 
           <div class="plot-controls">
             <div class="ir-toolbar" id="irToolbar">
-              <label>
-                IR view
-                <select id="irBandSelect">
-                  <option value="broadband">Broadband</option>
-                  <option value="0">63 Hz</option>
-                  <option value="1">125 Hz</option>
-                  <option value="2">250 Hz</option>
-                  <option value="3">500 Hz</option>
-                  <option value="4">1 kHz</option>
-                  <option value="5">2 kHz</option>
-                  <option value="6">4 kHz</option>
-                  <option value="7">8 kHz</option>
-                </select>
-              </label>
+              <select id="irBandSelect" aria-label="IR octave band">
+                <option value="broadband">Broadband</option>
+                <option value="0">63 Hz</option>
+                <option value="1">125 Hz</option>
+                <option value="2">250 Hz</option>
+                <option value="3">500 Hz</option>
+                <option value="4">1 kHz</option>
+                <option value="5">2 kHz</option>
+                <option value="6">4 kHz</option>
+                <option value="7">8 kHz</option>
+              </select>
             </div>
 
             <div class="plot-nav" aria-label="Plot view navigation">
               <button id="plotPrev" type="button" title="Impulse response">‹</button>
-              <span id="plotViewName">IR</span>
               <button id="plotNext" type="button" title="Frequency response">›</button>
             </div>
           </div>
