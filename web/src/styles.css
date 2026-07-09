@@ -537,17 +537,17 @@ textarea {
 
 /* Source / receiver fieldset colours */
 .source-box {
-  border-color: #61dafb !important;
+  border-color: #65e0ff !important;
 }
 
 .source-box legend {
-  color: #61dafb !important;
+  color: #65e0ff !important;
 }
 
 .receiver-box {
-  border-color: #ff4fd8 !important;
+  border-color: #ffd36e !important;
 }
 
 .receiver-box legend {
-  color: #ff4fd8 !important;
+  color: #ffd36e !important;
 }
