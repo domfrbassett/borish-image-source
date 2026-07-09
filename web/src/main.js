@@ -26,6 +26,7 @@ const elements = {
   applySurfaceAll: document.getElementById("applySurfaceAll"),
   clearSurfaceSelection: document.getElementById("clearSurfaceSelection"),
   irBandSelect: document.getElementById("irBandSelect"),
+  fftCanvas: document.getElementById("fftCanvas"),
 };
 
 const viewer = makeViewer(document.getElementById("viewport"));
@@ -764,6 +765,232 @@ function renderImpulsePlot(sparse, fixedMaxA = null) {
   }
 }
 
+function nextPowerOfTwo(value) {
+  let n = 1;
+  while (n < value) n <<= 1;
+  return n;
+}
+
+function fftRadix2(real, imag) {
+  const n = real.length;
+
+  let j = 0;
+  for (let i = 1; i < n; i++) {
+    let bit = n >> 1;
+    while (j & bit) {
+      j ^= bit;
+      bit >>= 1;
+    }
+    j ^= bit;
+
+    if (i < j) {
+      [real[i], real[j]] = [real[j], real[i]];
+      [imag[i], imag[j]] = [imag[j], imag[i]];
+    }
+  }
+
+  for (let len = 2; len <= n; len <<= 1) {
+    const angle = (-2 * Math.PI) / len;
+    const wLenR = Math.cos(angle);
+    const wLenI = Math.sin(angle);
+
+    for (let i = 0; i < n; i += len) {
+      let wR = 1;
+      let wI = 0;
+
+      for (let k = 0; k < len / 2; k++) {
+        const uR = real[i + k];
+        const uI = imag[i + k];
+
+        const vR = real[i + k + len / 2] * wR - imag[i + k + len / 2] * wI;
+        const vI = real[i + k + len / 2] * wI + imag[i + k + len / 2] * wR;
+
+        real[i + k] = uR + vR;
+        imag[i + k] = uI + vI;
+        real[i + k + len / 2] = uR - vR;
+        imag[i + k + len / 2] = uI - vI;
+
+        const nextWR = wR * wLenR - wI * wLenI;
+        const nextWI = wR * wLenI + wI * wLenR;
+        wR = nextWR;
+        wI = nextWI;
+      }
+    }
+  }
+}
+
+function sparseToTimeDomain(sparse, sampleRate) {
+  if (!sparse || !sparse.length) return new Float64Array(0);
+
+  const maxTimeMs = Math.max(...sparse.map((x) => Number(x.time_ms) || 0), 1e-9);
+  const neededSamples = Math.ceil((maxTimeMs / 1000) * sampleRate) + 1;
+
+  // Pad a bit so the FFT is not absurdly tiny.
+  const n = nextPowerOfTwo(Math.max(neededSamples, 2048));
+  const signal = new Float64Array(n);
+
+  for (const point of sparse) {
+    const sampleIndex = Math.round(((Number(point.time_ms) || 0) / 1000) * sampleRate);
+    if (sampleIndex >= 0 && sampleIndex < signal.length) {
+      signal[sampleIndex] += Number(point.amplitude) || 0;
+    }
+  }
+
+  return signal;
+}
+
+function computeMagnitudeSpectrumDb(sparse, sampleRate) {
+  const signal = sparseToTimeDomain(sparse, sampleRate);
+  if (!signal.length) return [];
+
+  const real = Array.from(signal);
+  const imag = new Array(real.length).fill(0);
+
+  fftRadix2(real, imag);
+
+  const half = Math.floor(real.length / 2);
+  const mags = [];
+
+  let maxMag = 1e-12;
+  for (let i = 1; i < half; i++) {
+    const mag = Math.hypot(real[i], imag[i]);
+    if (mag > maxMag) maxMag = mag;
+  }
+
+  for (let i = 1; i < half; i++) {
+    const frequency = (i * sampleRate) / real.length;
+    if (frequency < 20 || frequency > Math.min(20000, sampleRate / 2)) continue;
+
+    const mag = Math.hypot(real[i], imag[i]);
+    const db = 20 * Math.log10(Math.max(mag, 1e-12) / maxMag);
+
+    mags.push({ frequency, db });
+  }
+
+  return mags;
+}
+
+function renderFftPlot(sparse) {
+  const canvas = elements.fftCanvas;
+  if (!canvas) return;
+
+  const sampleRate = readNumber("sampleRate");
+  const spectrum = computeMagnitudeSpectrumDb(sparse, sampleRate);
+
+  const rect = canvas.getBoundingClientRect();
+  const scale = window.devicePixelRatio || 1;
+
+  canvas.width = Math.max(600, Math.floor(rect.width * scale));
+  canvas.height = Math.max(180, Math.floor(rect.height * scale));
+
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = "#0c1117";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (!spectrum.length) return;
+
+  const padL = 70 * scale;
+  const padR = 18 * scale;
+  const padT = 22 * scale;
+  const padB = 38 * scale;
+
+  const w = canvas.width - padL - padR;
+  const h = canvas.height - padT - padB;
+
+  const minF = 20;
+  const maxF = Math.min(20000, sampleRate / 2);
+  const minDb = -60;
+  const maxDb = 0;
+
+  function xForFreq(freq) {
+    const minLog = Math.log10(minF);
+    const maxLog = Math.log10(maxF);
+    return padL + ((Math.log10(freq) - minLog) / (maxLog - minLog)) * w;
+  }
+
+  function yForDb(db) {
+    const clamped = Math.max(minDb, Math.min(maxDb, db));
+    return padT + ((maxDb - clamped) / (maxDb - minDb)) * h;
+  }
+
+  // axes
+  ctx.strokeStyle = "#293544";
+  ctx.lineWidth = 1 * scale;
+  ctx.beginPath();
+  ctx.moveTo(padL, padT);
+  ctx.lineTo(padL, padT + h);
+  ctx.lineTo(padL + w, padT + h);
+  ctx.stroke();
+
+  ctx.font = `${11 * scale}px ui-monospace, monospace`;
+  ctx.fillStyle = "#9fb0c1";
+
+  // y ticks
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (const db of [0, -12, -24, -36, -48, -60]) {
+    const y = yForDb(db);
+
+    ctx.strokeStyle = db === 0 || db === -60 ? "#293544" : "#1d2733";
+    ctx.beginPath();
+    ctx.moveTo(padL, y);
+    ctx.lineTo(padL + w, y);
+    ctx.stroke();
+
+    ctx.fillStyle = "#9fb0c1";
+    ctx.fillText(`${db} dB`, padL - 8 * scale, y);
+  }
+
+  // x ticks
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  for (const freq of [31.5, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]) {
+    if (freq < minF || freq > maxF) continue;
+
+    const x = xForFreq(freq);
+    ctx.strokeStyle = "#1d2733";
+    ctx.beginPath();
+    ctx.moveTo(x, padT);
+    ctx.lineTo(x, padT + h);
+    ctx.stroke();
+
+    const label = freq >= 1000 ? `${freq / 1000}k` : `${freq}`;
+    ctx.fillStyle = "#9fb0c1";
+    ctx.fillText(label, x, padT + h + 8 * scale);
+  }
+
+  // y-axis title
+  ctx.save();
+  ctx.translate(14 * scale, padT + h / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("dB", 0, 0);
+  ctx.restore();
+
+  // plot spectrum
+  ctx.strokeStyle = "#61dafb";
+  ctx.lineWidth = 1.5 * scale;
+  ctx.beginPath();
+
+  let started = false;
+  for (const point of spectrum) {
+    const x = xForFreq(point.frequency);
+    const y = yForDb(point.db);
+
+    if (!started) {
+      ctx.moveTo(x, y);
+      started = true;
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+
+  ctx.stroke();
+}
+
 function distance3(a, b) {
   return Math.hypot(
     Number(a[0]) - Number(b[0]),
@@ -834,7 +1061,6 @@ function sparseIrForBand(simulation, bandValue) {
 function redrawSelectedIrView() {
   const view = elements.irBandSelect?.value || "broadband";
 
-  // Build all views first so the y-axis scale is shared.
   const allViews = [
     sparseIrForBand(lastSimulation, "broadband"),
     sparseIrForBand(lastSimulation, "0"),
@@ -852,7 +1078,10 @@ function redrawSelectedIrView() {
     1e-9
   );
 
-  renderImpulsePlot(sparseIrForBand(lastSimulation, view), fixedMaxA);
+  const selectedSparse = sparseIrForBand(lastSimulation, view);
+
+  renderImpulsePlot(selectedSparse, fixedMaxA);
+  renderFftPlot(selectedSparse);
 }
 
 worker.onmessage = (event) => {
