@@ -561,3 +561,52 @@ textarea {
   margin-top: 10px;
   border-radius: 0;
 }
+
+/* IR and FFT plot sizing */
+.plot-canvas,
+#irCanvas,
+#fftCanvas {
+  width: 100% !important;
+  height: 220px !important;
+  min-height: 220px !important;
+  display: block !important;
+  box-sizing: border-box !important;
+  border: 1px solid var(--line) !important;
+  background: #0c1117 !important;
+  border-radius: 0 !important;
+}
+
+#fftCanvas {
+  margin-top: 8px !important;
+}
+
+.plot-subtitle {
+  margin: 14px 0 6px 0 !important;
+  font-size: 0.95rem !important;
+  color: var(--accent) !important;
+  font-weight: 600 !important;
+}
+
+.ir-toolbar {
+  display: flex !important;
+  justify-content: flex-end !important;
+  align-items: center !important;
+  margin: 0 0 10px 0 !important;
+}
+
+.ir-toolbar label {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  color: var(--muted) !important;
+}
+
+.ir-toolbar select {
+  min-width: 180px !important;
+  height: 36px !important;
+  background: #111a24 !important;
+  color: var(--text) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 0 !important;
+  padding: 4px 10px !important;
+}

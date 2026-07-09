@@ -107,6 +107,7 @@
         <h2>Impulse response</h2>
         <div class="ir-toolbar">
           <label>
+            IR view
             <select id="irBandSelect">
               <option value="broadband">Broadband</option>
               <option value="0">63 Hz</option>
@@ -120,8 +121,11 @@
             </select>
           </label>
         </div>
-        <canvas id="irCanvas" width="1200" height="320"></canvas>
-        <canvas id="fftCanvas"></canvas>
+
+        <canvas id="irCanvas" class="plot-canvas"></canvas>
+
+        <h3 class="plot-subtitle">Frequency response</h3>
+        <canvas id="fftCanvas" class="plot-canvas"></canvas>
       </section>
     </section>
 
