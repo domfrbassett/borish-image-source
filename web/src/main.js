@@ -651,7 +651,7 @@ function escapeHtml(text) {
   return String(text).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
 }
 
-function renderImpulsePlot(sparse) {
+function renderImpulsePlot(sparse, fixedMaxA = null) {
   const canvas = elements.irCanvas;
   const rect = canvas.getBoundingClientRect();
   const scale = window.devicePixelRatio || 1;
@@ -669,8 +669,15 @@ function renderImpulsePlot(sparse) {
   const padB = 32 * scale;
   const w = canvas.width - padL - padR;
   const h = canvas.height - padT - padB;
+
   const maxT = Math.max(...sparse.map((x) => x.time_ms), 1e-9);
-  const maxA = Math.max(...sparse.map((x) => Math.abs(x.amplitude)), 1e-9);
+
+  // Important:
+  // Use a fixed vertical scale across IR-band dropdown choices.
+  // Otherwise each band normalises itself and looks the same.
+  const maxA = Number.isFinite(Number(fixedMaxA)) && Number(fixedMaxA) > 0
+    ? Number(fixedMaxA)
+    : Math.max(...sparse.map((x) => Math.abs(x.amplitude)), 1e-9);
 
   ctx.strokeStyle = "#293544";
   ctx.lineWidth = 1 * scale;
@@ -686,10 +693,15 @@ function renderImpulsePlot(sparse) {
   ctx.fillText(`${maxT.toFixed(1)} ms`, padL + w - 72 * scale, padT + h + 22 * scale);
   ctx.fillText("amp", 8 * scale, padT + 10 * scale);
 
+  const label = elements.irBandSelect
+    ? elements.irBandSelect.options[elements.irBandSelect.selectedIndex]?.text || "IR"
+    : "IR";
+  ctx.fillText(label, padL + 4 * scale, padT + 12 * scale);
+
   for (const point of sparse) {
     const x = padL + (point.time_ms / maxT) * w;
     const y0 = padT + h;
-    const y1 = padT + h - (Math.abs(point.amplitude) / maxA) * h;
+    const y1 = padT + h - Math.min(1, Math.abs(point.amplitude) / maxA) * h;
     ctx.strokeStyle = point.order === 0 ? "#ffffff" : point.order === 1 ? "#61dafb" : "#a78bfa";
     ctx.beginPath();
     ctx.moveTo(x, y0);
@@ -767,7 +779,26 @@ function sparseIrForBand(simulation, bandValue) {
 
 function redrawSelectedIrView() {
   const view = elements.irBandSelect?.value || "broadband";
-  renderImpulsePlot(sparseIrForBand(lastSimulation, view));
+
+  // Build all views first so the y-axis scale is shared.
+  const allViews = [
+    sparseIrForBand(lastSimulation, "broadband"),
+    sparseIrForBand(lastSimulation, "0"),
+    sparseIrForBand(lastSimulation, "1"),
+    sparseIrForBand(lastSimulation, "2"),
+    sparseIrForBand(lastSimulation, "3"),
+    sparseIrForBand(lastSimulation, "4"),
+    sparseIrForBand(lastSimulation, "5"),
+    sparseIrForBand(lastSimulation, "6"),
+    sparseIrForBand(lastSimulation, "7"),
+  ];
+
+  const fixedMaxA = Math.max(
+    ...allViews.flat().map((x) => Math.abs(Number(x.amplitude) || 0)),
+    1e-9
+  );
+
+  renderImpulsePlot(sparseIrForBand(lastSimulation, view), fixedMaxA);
 }
 
 worker.onmessage = (event) => {
