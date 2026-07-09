@@ -336,6 +336,7 @@ function forceSingleSurfaceSelection(faceIndex) {
     selectedSurfaceIndex = null;
     selectedSurfaceIndices = [];
     viewer.clearSurfaceHighlight?.();
+    viewer.setSurfaceHighlights?.([]);
     refreshSurfacePanel();
     return;
   }
@@ -343,8 +344,9 @@ function forceSingleSurfaceSelection(faceIndex) {
   selectedSurfaceIndex = faceIndex;
   selectedSurfaceIndices = [faceIndex];
 
-  // Important: clear any old multi-surface yellow highlight first.
+  // Clear every old multi-highlight first, then draw only the clicked face.
   viewer.clearSurfaceHighlight?.();
+  viewer.setSurfaceHighlights?.([]);
   viewer.setSurfaceHighlight?.(faceIndex);
 
   refreshSurfacePanel();
@@ -443,33 +445,53 @@ function setFaceAcousticProperties(face, absorption, scattering, wallName, mater
   const cleanWallName = String(wallName || "").trim();
   const cleanMaterialName = String(materialName || "").trim();
 
-  if (!face.original_group) face.original_group = face.group || face.name || face.object || "";
-  if (!face.original_material) face.original_material = face.material || face.acoustic_material || "";
+  // Preserve original/imported identity forever.
+  // These are what keep surfaces distinct.
+  if (!face.original_group) {
+    face.original_group = face.group || face.name || face.object || "";
+  }
+
+  if (!face.original_name) {
+    face.original_name = face.name || face.group || face.object || "";
+  }
+
+  if (!face.original_material) {
+    face.original_material = face.material || face.acoustic_material || "";
+  }
 
   face.absorption = normalizeAbsorptionBands(absorption, null);
-  if (!face.absorption) throw new Error("Absorption must be eight octave-band values between 0 and 1.");
+  if (!face.absorption) {
+    throw new Error("Absorption must be eight octave-band values between 0 and 1.");
+  }
 
   face.scattering = clamp01(scattering, 0);
 
-  // Remove any old artificial grouping ID. Shared names are allowed,
-  // but they must not make surfaces behave as one selected object.
+  // Delete any old artificial grouping ID from previous broken versions.
   delete face.user_surface_id;
 
+  // IMPORTANT:
+  // User wall names are display/acoustic names only.
+  // Do NOT overwrite face.name, face.group, or face.group_name.
+  // Otherwise separate planes become glued together by shared identity.
   if (cleanWallName) {
     face.user_surface_name = cleanWallName;
     face.surface_name = cleanWallName;
     face.display_name = cleanWallName;
-    face.name = cleanWallName;
-    face.group = cleanWallName;
-    face.group_name = cleanWallName;
   }
 
   if (cleanMaterialName) {
-    face.material = cleanMaterialName;
     face.acoustic_material = cleanMaterialName;
     face.material_name = cleanMaterialName;
+
+    // Keep face.material if you want imported material identity preserved.
+    // Do not use material as a grouping key after user edits.
+    face.user_material_name = cleanMaterialName;
   } else {
-    face.acoustic_material = face.acoustic_material || face.material || face.group || "User material";
+    face.acoustic_material =
+      face.acoustic_material ||
+      face.material_name ||
+      face.material ||
+      "User material";
   }
 }
 
@@ -496,7 +518,8 @@ function applySurfaceProperties(mode) {
   } else if (mode === "connected") {
     if (selectedSurfaceIndex === null || !mesh.faces[selectedSurfaceIndex]) return;
 
-    // Apply to all connected/copanar surfaces, but do not select them as a unit.
+    // Apply to connected coplanar surfaces,
+    // but do not make them a persistent selected/grouped object.
     indices = connectedCoplanarFaceIndices(selectedSurfaceIndex);
 
   } else if (mode === "group") {
@@ -504,23 +527,24 @@ function applySurfaceProperties(mode) {
 
     const selected = mesh.faces[selectedSurfaceIndex];
 
-    // Same-group means original imported group/material only.
-    // It does NOT use user_surface_id and does NOT use the new user-entered name.
+    // Same group uses original imported identity only.
+    // It must NOT use user_surface_name, display_name, material_name,
+    // or anything created by Apply connected plane.
     const selectedGroup =
       selected.original_group ||
       selected.imported_group ||
-      selected.original_material ||
+      selected.original_name ||
       selected.object ||
-      selected.material ||
+      selected.original_material ||
       null;
 
     mesh.faces.forEach((face, index) => {
       const key =
         face.original_group ||
         face.imported_group ||
-        face.original_material ||
+        face.original_name ||
         face.object ||
-        face.material ||
+        face.original_material ||
         null;
 
       if (key === selectedGroup) indices.push(index);
@@ -537,8 +561,7 @@ function applySurfaceProperties(mode) {
     return;
   }
 
-  // Remove all old artificial connected-plane grouping IDs from the whole mesh.
-  // This cleans up previous sessions where connected planes got glued together.
+  // Clean old artificial grouping from the entire mesh.
   mesh.faces.forEach((face) => {
     delete face.user_surface_id;
   });
@@ -547,9 +570,9 @@ function applySurfaceProperties(mode) {
     setFaceAcousticProperties(mesh.faces[index], absorption, scattering, wallName, materialName);
   }
 
-  // Critical behavior:
-  // Apply connected/group/all changes attributes on many surfaces,
-  // but only the originally clicked surface stays selected/yellow.
+  // Critical:
+  // Even if attributes were applied to many faces,
+  // the yellow selection must return to only the originally clicked face.
   if (originalClickedIndex !== null && originalClickedIndex !== undefined && mesh.faces[originalClickedIndex]) {
     forceSingleSurfaceSelection(originalClickedIndex);
   } else {
