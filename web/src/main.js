@@ -25,6 +25,7 @@ const elements = {
   applySurfaceGroup: document.getElementById("applySurfaceGroup"),
   applySurfaceAll: document.getElementById("applySurfaceAll"),
   clearSurfaceSelection: document.getElementById("clearSurfaceSelection"),
+  irBandSelect: document.getElementById("irBandSelect"),
 };
 
 const viewer = makeViewer(document.getElementById("viewport"));
@@ -697,6 +698,78 @@ function renderImpulsePlot(sparse) {
   }
 }
 
+function distance3(a, b) {
+  return Math.hypot(
+    Number(a[0]) - Number(b[0]),
+    Number(a[1]) - Number(b[1]),
+    Number(a[2]) - Number(b[2])
+  );
+}
+
+function pathBandAmplitude(path, bandIndex, result) {
+  // Direct path has no reflection losses.
+  const source = result.source;
+  const receiver = result.receiver;
+  const directDistance = distance3(source, receiver);
+  const pathLength = Math.max(Number(path.path_length_m || 0), 1.0e-12);
+
+  // Current solver normally normalizes to direct distance.
+  const normalizeToDirect = result.config?.normalize_to_direct !== false;
+  const spreading = normalizeToDirect
+    ? directDistance / pathLength
+    : 1.0 / pathLength;
+
+  let reflectionGain = 1.0;
+
+  for (const step of path.ancestry || []) {
+    const absorption = step.absorption;
+
+    let alpha = 0.05;
+    if (Array.isArray(absorption) && absorption.length) {
+      alpha = Number(absorption[bandIndex]);
+      if (!Number.isFinite(alpha)) {
+        const valid = absorption.map(Number).filter(Number.isFinite);
+        alpha = valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : 0.05;
+      }
+    } else if (Number.isFinite(Number(absorption))) {
+      alpha = Number(absorption);
+    }
+
+    alpha = Math.max(0, Math.min(1, alpha));
+    reflectionGain *= Math.sqrt(Math.max(0, 1 - alpha));
+  }
+
+  return spreading * reflectionGain;
+}
+
+function sparseIrForBand(simulation, bandValue) {
+  if (!simulation) return [];
+
+  if (bandValue === "broadband") {
+    return simulation.impulse_response?.sparse || [];
+  }
+
+  const bandIndex = Number(bandValue);
+  if (!Number.isInteger(bandIndex) || bandIndex < 0 || bandIndex > 7) {
+    return simulation.impulse_response?.sparse || [];
+  }
+
+  const result = simulation.result;
+  const paths = result?.paths || [];
+
+  return paths.map((path) => ({
+    path_id: path.path_id,
+    order: path.order,
+    time_ms: Number(path.arrival_time_relative_s || 0) * 1000.0,
+    amplitude: pathBandAmplitude(path, bandIndex, result),
+  }));
+}
+
+function redrawSelectedIrView() {
+  const view = elements.irBandSelect?.value || "broadband";
+  renderImpulsePlot(sparseIrForBand(lastSimulation, view));
+}
+
 worker.onmessage = (event) => {
   const { type } = event.data;
   if (type === "status") {
@@ -731,7 +804,7 @@ worker.onmessage = (event) => {
     viewer.showPaths(result.paths);
     viewer.animatePaths(result.paths, 9000);
     renderToaTable(lastSimulation.toa);
-    renderImpulsePlot(lastSimulation.impulse_response.sparse);
+    redrawSelectedIrView();;
     setDownloadsEnabled(true);
     const orderCounts = new Map();
     for (const path of result.paths) orderCounts.set(path.order, (orderCounts.get(path.order) || 0) + 1);
@@ -756,7 +829,11 @@ worker.onmessage = (event) => {
   }
 };
 
-
+if (elements.irBandSelect) {
+  elements.irBandSelect.addEventListener("change", () => {
+    redrawSelectedIrView();
+  });
+}
 if (elements.applySurfaceSelected) {
   elements.applySurfaceSelected.addEventListener("click", () => applySurfaceProperties("selected"));
 }

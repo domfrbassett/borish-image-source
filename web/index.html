@@ -105,6 +105,22 @@
     </section>
       <section class="panel ir-panel">
         <h2>Impulse response</h2>
+        <div class="ir-toolbar">
+          <label>
+            IR view
+            <select id="irBandSelect">
+              <option value="broadband">Broadband</option>
+              <option value="0">63 Hz</option>
+              <option value="1">125 Hz</option>
+              <option value="2">250 Hz</option>
+              <option value="3">500 Hz</option>
+              <option value="4">1 kHz</option>
+              <option value="5">2 kHz</option>
+              <option value="6">4 kHz</option>
+              <option value="7">8 kHz</option>
+            </select>
+          </label>
+        </div>
         <canvas id="irCanvas" width="1200" height="320"></canvas>
       </section>
     </section>
