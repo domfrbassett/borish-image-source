@@ -563,6 +563,11 @@ textarea {
 }
 
 /* IR and FFT plot sizing */
+.ir-panel {
+  min-height: 560px !important;
+  overflow: visible !important;
+}
+
 .plot-canvas,
 #irCanvas,
 #fftCanvas {
@@ -576,11 +581,16 @@ textarea {
   border-radius: 0 !important;
 }
 
+#irCanvas {
+  margin-bottom: 14px !important;
+}
+
 #fftCanvas {
   margin-top: 8px !important;
 }
 
 .plot-subtitle {
+  display: block !important;
   margin: 14px 0 6px 0 !important;
   font-size: 0.95rem !important;
   color: var(--accent) !important;
