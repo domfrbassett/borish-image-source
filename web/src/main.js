@@ -78,6 +78,7 @@ function readPayload() {
       max_nodes: readNumber("maxNodes"),
       auto_flip_normals: true,
       surface_material_count: mesh.faces.filter(surfaceHasAssignedMaterial).length,
+      air_attenuation: readAirOptions(),
     }
   };
 }
@@ -121,6 +122,97 @@ function averageAbsorption(value, fallback = 0.05) {
   }
   if (Number.isFinite(Number(value))) return Number(value);
   return fallback;
+}
+
+function readAirOptions() {
+  return {
+    enabled: document.getElementById("airAttenuationEnabled")?.checked ?? true,
+    temperature_c: Number(document.getElementById("airTemperatureC")?.value ?? 20),
+    relative_humidity_percent: Number(document.getElementById("airRelativeHumidity")?.value ?? 50),
+    pressure_kpa: Number(document.getElementById("airPressureKPa")?.value ?? 101.325),
+  };
+}
+
+function airAbsorptionDbPerMISO9613(frequencyHz, temperatureC = 20, relativeHumidityPercent = 50, pressureKPa = 101.325) {
+  const f = Number(frequencyHz);
+  const T = Number(temperatureC) + 273.15;
+  const T0 = 293.15;
+  const T01 = 273.16;
+  const p = Number(pressureKPa);
+  const pr = 101.325;
+  const rh = Math.max(0, Math.min(100, Number(relativeHumidityPercent))) / 100.0;
+
+  if (!Number.isFinite(f) || f <= 0) return 0;
+  if (!Number.isFinite(T) || !Number.isFinite(p) || p <= 0) return 0;
+
+  // Saturation vapour pressure ratio.
+  const psatOverPr = Math.pow(
+    10,
+    -6.8346 * Math.pow(T01 / T, 1.261) + 4.6151
+  );
+
+  // Molar concentration of water vapour.
+  const h = rh * psatOverPr * (pr / p);
+
+  const frO =
+    (p / pr) *
+    (24.0 + 4.04e4 * h * (0.02 + h) / (0.391 + h));
+
+  const frN =
+    (p / pr) *
+    Math.pow(T / T0, -0.5) *
+    (9.0 + 280.0 * h * Math.exp(-4.170 * (Math.pow(T / T0, -1.0 / 3.0) - 1.0)));
+
+  const alpha =
+    8.686 * f * f *
+    (
+      1.84e-11 * Math.pow(p / pr, -1) * Math.sqrt(T / T0) +
+      Math.pow(T / T0, -2.5) *
+      (
+        0.01275 * Math.exp(-2239.1 / T) / (frO + f * f / frO) +
+        0.1068 * Math.exp(-3352.0 / T) / (frN + f * f / frN)
+      )
+    );
+
+  return Math.max(0, alpha); // dB per metre
+}
+
+function airAbsorptionDbPerMByBand() {
+  const air = readAirOptions();
+
+  if (!air.enabled) {
+    return OCTAVE_BANDS_HZ.map(() => 0);
+  }
+
+  return OCTAVE_BANDS_HZ.map((frequencyHz) =>
+    airAbsorptionDbPerMISO9613(
+      frequencyHz,
+      air.temperature_c,
+      air.relative_humidity_percent,
+      air.pressure_kpa
+    )
+  );
+}
+
+function airGainForBand(pathLengthM, directDistanceM, bandIndex, normalizeToDirect = true) {
+  const air = readAirOptions();
+  if (!air.enabled) return 1.0;
+
+  const coefficients = airAbsorptionDbPerMByBand();
+  const dbPerM = coefficients[bandIndex] || 0;
+
+  // Because your IR is currently relative to the direct path,
+  // only apply air loss to the extra distance beyond the direct path.
+  // This keeps the direct path at 0 dB / amplitude 1.
+  const distanceForAir =
+    normalizeToDirect
+      ? Math.max(0, Number(pathLengthM) - Number(directDistanceM))
+      : Math.max(0, Number(pathLengthM));
+
+  const totalDbLoss = dbPerM * distanceForAir;
+
+  // dB pressure/amplitude conversion.
+  return Math.pow(10, -totalDbLoss / 20.0);
 }
 
 function normalizeAbsorptionBands(value, fallback = null) {
@@ -1032,23 +1124,48 @@ function pathBandAmplitude(path, bandIndex, result) {
     reflectionGain *= Math.sqrt(Math.max(0, 1 - alpha));
   }
 
-  return spreading * reflectionGain;
+  const airGain = airGainForBand(
+    pathLength,
+    directDistance,
+    bandIndex,
+    normalizeToDirect
+  );
+
+  return spreading * reflectionGain * airGain;
 }
 
 function sparseIrForBand(simulation, bandValue) {
   if (!simulation) return [];
 
+  const result = simulation.result;
+  const paths = result?.paths || [];
+
+  if (!paths.length) return [];
+
   if (bandValue === "broadband") {
-    return simulation.impulse_response?.sparse || [];
+    return paths.map((path) => {
+      const bandAmplitudes = OCTAVE_BANDS_HZ.map((_, bandIndex) =>
+        pathBandAmplitude(path, bandIndex, result)
+      );
+
+      const rmsAmplitude = Math.sqrt(
+        bandAmplitudes.reduce((sum, value) => sum + value * value, 0) / bandAmplitudes.length
+      );
+
+      return {
+        path_id: path.path_id,
+        order: path.order,
+        time_ms: Number(path.arrival_time_relative_s || 0) * 1000.0,
+        amplitude: rmsAmplitude,
+      };
+    });
   }
 
   const bandIndex = Number(bandValue);
-  if (!Number.isInteger(bandIndex) || bandIndex < 0 || bandIndex > 7) {
-    return simulation.impulse_response?.sparse || [];
-  }
 
-  const result = simulation.result;
-  const paths = result?.paths || [];
+  if (!Number.isInteger(bandIndex) || bandIndex < 0 || bandIndex > 7) {
+    return sparseIrForBand(simulation, "broadband");
+  }
 
   return paths.map((path) => ({
     path_id: path.path_id,

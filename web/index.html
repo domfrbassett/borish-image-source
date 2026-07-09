@@ -85,9 +85,39 @@
         <label>Max time after direct, ms <input id="maxTimeMs" type="number" min="1" value="120"></label>
         <label>Speed of sound, m/s <input id="speedOfSound" type="number" min="1" value="343"></label>
         <label>Sample rate <input id="sampleRate" type="number" min="8000" value="48000"></label>
+
+        <fieldset class="air-attenuation-box">
+          <legend>Air attenuation</legend>
+
+          <label>
+            <input id="airAttenuationEnabled" type="checkbox" checked>
+            Apply frequency-dependent air absorption
+          </label>
+
+          <label>
+            Temperature, °C
+            <input id="airTemperatureC" type="number" step="0.1" value="20">
+          </label>
+
+          <label>
+            Relative humidity, %
+            <input id="airRelativeHumidity" type="number" step="1" min="0" max="100" value="50">
+          </label>
+
+          <label>
+            Atmospheric pressure, kPa
+            <input id="airPressureKPa" type="number" step="0.001" value="101.325">
+          </label>
+
+          <p class="hint">
+            Uses a frequency-dependent air absorption model. Mainly affects long paths and high frequencies.
+          </p>
+        </fieldset>
+
         <label>Max nodes <input id="maxNodes" type="number" min="1" value="250000"></label>
         <p class="hint wide">All surfaces must have assigned material absorption before simulation.</p>
       </div>
+
       <div class="button-row primary">
         <button id="checkButton">Check closure</button>
         <button id="runButton">Run ISM</button>
