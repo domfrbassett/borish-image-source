@@ -747,14 +747,6 @@ function renderImpulsePlot(sparse, fixedMaxA = null) {
   ctx.fillText("dBrFS", 0, 0);
   ctx.restore();
 
-  // selected IR view label
-  ctx.textAlign = "left";
-  ctx.textBaseline = "alphabetic";
-  const label = elements.irBandSelect
-    ? elements.irBandSelect.options[elements.irBandSelect.selectedIndex]?.text || "IR"
-    : "IR";
-  ctx.fillText(label, padL + 4 * scale, padT + 12 * scale);
-
   // impulse spikes
   for (const point of sparse) {
     const x = padL + ((Number(point.time_ms) || 0) / maxT) * w;

@@ -534,3 +534,20 @@ textarea {
   border-radius: 0;
   padding: 2px 8px;
 }
+
+/* Source / receiver fieldset colours */
+.source-box {
+  border-color: #61dafb !important;
+}
+
+.source-box legend {
+  color: #61dafb !important;
+}
+
+.receiver-box {
+  border-color: #ff4fd8 !important;
+}
+
+.receiver-box legend {
+  color: #ff4fd8 !important;
+}
