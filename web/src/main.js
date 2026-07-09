@@ -324,14 +324,7 @@ function activeSurfaceIndices() {
 
 function userSurfaceGroupIndices(faceIndex) {
   if (!mesh || faceIndex === null || faceIndex === undefined || !mesh.faces[faceIndex]) return [];
-  const id = mesh.faces[faceIndex].user_surface_id;
-  if (!id) return [faceIndex];
-
-  const indices = [];
-  mesh.faces.forEach((face, index) => {
-    if (face.user_surface_id === id) indices.push(index);
-  });
-  return indices;
+  return [faceIndex];
 }
 
 function selectSurfaceSet(indices, clickedFaceIndex = null) {
@@ -473,25 +466,41 @@ function applySurfaceProperties(mode) {
   let indices = [];
 
   if (mode === "selected") {
-    indices = activeSurfaceIndices();
+    // Only the currently selected/clicked surface.
+    indices = [selectedSurfaceIndex];
+
   } else if (mode === "connected") {
+    // Copy the current surface attributes to connected coplanar surfaces,
+    // but do NOT permanently group/glue them together.
     if (selectedSurfaceIndex === null || !mesh.faces[selectedSurfaceIndex]) return;
     indices = connectedCoplanarFaceIndices(selectedSurfaceIndex);
+
   } else if (mode === "group") {
+    // Use the original imported group/material identity only.
+    // Do NOT use user_surface_id, because that is what glued connected planes together.
     if (selectedSurfaceIndex === null || !mesh.faces[selectedSurfaceIndex]) return;
+
     const selected = mesh.faces[selectedSurfaceIndex];
-    if (selected.user_surface_id) {
-      const id = selected.user_surface_id;
-      mesh.faces.forEach((face, index) => {
-        if (face.user_surface_id === id) indices.push(index);
-      });
-    } else {
-      const selectedGroup = selected.original_group || selected.imported_group || selected.group || selected.name || selected.object || selected.material || null;
-      mesh.faces.forEach((face, index) => {
-        const key = face.original_group || face.imported_group || face.group || face.name || face.object || face.material || null;
-        if (key === selectedGroup) indices.push(index);
-      });
-    }
+    const selectedGroup =
+      selected.original_group ||
+      selected.imported_group ||
+      selected.original_material ||
+      selected.object ||
+      selected.material ||
+      null;
+
+    mesh.faces.forEach((face, index) => {
+      const key =
+        face.original_group ||
+        face.imported_group ||
+        face.original_material ||
+        face.object ||
+        face.material ||
+        null;
+
+      if (key === selectedGroup) indices.push(index);
+    });
+
   } else if (mode === "all") {
     indices = mesh.faces.map((_, index) => index);
   }
@@ -503,17 +512,17 @@ function applySurfaceProperties(mode) {
   }
 
   if (mode === "connected") {
-    const existingId = mesh.faces[selectedSurfaceIndex].user_surface_id;
-    const newId = existingId || `user_surface_${userSurfaceCounter++}`;
-    for (const index of indices) mesh.faces[index].user_surface_id = newId;
+    for (const index of indices) delete mesh.faces[index].user_surface_id;
   }
 
   for (const index of indices) {
     setFaceAcousticProperties(mesh.faces[index], absorption, scattering, wallName, materialName);
   }
 
-  if (mode === "connected" || mode === "group" || mode === "selected") {
+  if (mode === "selected" || mode === "group") {
     selectSurfaceSet(indices, selectedSurfaceIndex);
+  } else if (mode === "connected") {
+    selectSurfaceSet([selectedSurfaceIndex], selectedSurfaceIndex);
   }
 
   refreshSurfacePanel();
