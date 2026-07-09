@@ -317,33 +317,47 @@ function connectedCoplanarFaceIndices(startFaceIndex) {
 }
 
 function activeSurfaceIndices() {
-  if (Array.isArray(selectedSurfaceIndices) && selectedSurfaceIndices.length) return selectedSurfaceIndices;
-  if (selectedSurfaceIndex !== null && selectedSurfaceIndex !== undefined) return [selectedSurfaceIndex];
+  // A selected surface is always only the clicked surface.
+  // Connected/group modes are apply targets, not persistent selection groups.
+  if (selectedSurfaceIndex !== null && selectedSurfaceIndex !== undefined && mesh?.faces?.[selectedSurfaceIndex]) {
+    return [selectedSurfaceIndex];
+  }
   return [];
 }
 
 function userSurfaceGroupIndices(faceIndex) {
+  // Same user name/material must NOT make surfaces behave as one object.
   if (!mesh || faceIndex === null || faceIndex === undefined || !mesh.faces[faceIndex]) return [];
   return [faceIndex];
 }
 
-function selectSurfaceSet(indices, clickedFaceIndex = null) {
-  selectedSurfaceIndices = Array.isArray(indices)
-    ? indices.filter((x) => Number.isInteger(x) && mesh?.faces?.[x])
-    : [];
-
-  if (clickedFaceIndex !== null && clickedFaceIndex !== undefined && mesh?.faces?.[clickedFaceIndex]) {
-    selectedSurfaceIndex = clickedFaceIndex;
-  } else {
-    selectedSurfaceIndex = selectedSurfaceIndices.length ? selectedSurfaceIndices[0] : null;
+function forceSingleSurfaceSelection(faceIndex) {
+  if (faceIndex === null || faceIndex === undefined || !mesh?.faces?.[faceIndex]) {
+    selectedSurfaceIndex = null;
+    selectedSurfaceIndices = [];
+    viewer.clearSurfaceHighlight?.();
+    refreshSurfacePanel();
+    return;
   }
 
-  if (selectedSurfaceIndices.length > 1) {
-    viewer.setSurfaceHighlights?.(selectedSurfaceIndices);
-  } else if (selectedSurfaceIndex !== null && selectedSurfaceIndex !== undefined) {
-    viewer.setSurfaceHighlight?.(selectedSurfaceIndex);
+  selectedSurfaceIndex = faceIndex;
+  selectedSurfaceIndices = [faceIndex];
+
+  // Important: clear any old multi-surface yellow highlight first.
+  viewer.clearSurfaceHighlight?.();
+  viewer.setSurfaceHighlight?.(faceIndex);
+
+  refreshSurfacePanel();
+}
+
+function selectSurfaceSet(indices, clickedFaceIndex = null) {
+  // Keep this function for compatibility, but make it non-grouping.
+  if (clickedFaceIndex !== null && clickedFaceIndex !== undefined && mesh?.faces?.[clickedFaceIndex]) {
+    forceSingleSurfaceSelection(clickedFaceIndex);
+  } else if (Array.isArray(indices) && indices.length && mesh?.faces?.[indices[0]]) {
+    forceSingleSurfaceSelection(indices[0]);
   } else {
-    viewer.clearSurfaceHighlight?.();
+    forceSingleSurfaceSelection(null);
   }
 }
 
@@ -351,26 +365,23 @@ function selectedSurfaceInfo(faceIndex) {
   if (!mesh || faceIndex === null || faceIndex === undefined || !mesh.faces[faceIndex]) {
     return "No surface selected.";
   }
+
   const face = mesh.faces[faceIndex];
   const absorption = averageAbsorption(face.absorption, 0.05);
   const scattering = clamp01(face.scattering, 0);
   const label = faceLabel(face, faceIndex);
   const vertices = face.indices ? face.indices.length : 0;
   const connectedCount = connectedCoplanarFaceIndices(faceIndex).length;
-  const selectedCount = activeSurfaceIndices().length;
-  const userSetCount = userSurfaceGroupIndices(faceIndex).length;
+
   return [
-    selectedCount > 1
-      ? `Selected named/connected surface: ${label}`
-      : `Selected surface ${faceIndex}: ${label}`,
+    `Selected surface ${faceIndex}: ${label}`,
     `clicked_face=${faceIndex}`,
     `wall_name=${face.user_surface_name || face.surface_name || face.name || face.group || ""}`,
     `material=${face.acoustic_material || face.material || "Default"}`,
     `original_group=${face.original_group || face.imported_group || ""}`,
     `vertices=${vertices}`,
-    `connected_coplanar_faces=${connectedCount}`,
-    `named_surface_faces=${userSetCount}`,
-    `active_selection_faces=${selectedCount}`,
+    `connected_coplanar_apply_targets=${connectedCount}`,
+    `active_selection_faces=1`,
     `absorption_avg=${averageAbsorption(absorption, 0.05).toFixed(3)}`,
     `scattering=${scattering.toFixed(3)}`,
   ].join("\n");
@@ -385,22 +396,21 @@ function refreshSurfacePanel() {
   for (const id of ["applySurfaceSelected", "applySurfaceConnected", "applySurfaceGroup"]) {
     if (elements[id]) elements[id].disabled = !hasSelection;
   }
+
   if (elements.applySurfaceAll) elements.applySurfaceAll.disabled = !mesh;
   if (elements.clearSurfaceSelection) elements.clearSurfaceSelection.disabled = !hasSelection;
 }
 
 function selectSurface(faceIndex) {
   if (faceIndex === null || faceIndex === undefined || !mesh?.faces?.[faceIndex]) {
-    selectedSurfaceIndex = null;
-    selectedSurfaceIndices = [];
-    viewer.clearSurfaceHighlight?.();
-    refreshSurfacePanel();
+    forceSingleSurfaceSelection(null);
     return;
   }
 
   const face = mesh.faces[faceIndex];
-  const namedSet = userSurfaceGroupIndices(faceIndex);
-  selectSurfaceSet(namedSet, faceIndex);
+
+  // Always select only the clicked face/plane.
+  forceSingleSurfaceSelection(faceIndex);
 
   if (elements.surfaceName) {
     elements.surfaceName.value =
@@ -412,19 +422,21 @@ function selectSurface(faceIndex) {
       face.object ||
       `Face_${faceIndex}`;
   }
+
   if (elements.surfaceMaterialName) {
-    elements.surfaceMaterialName.value = face.acoustic_material || face.material || "Default";
+    elements.surfaceMaterialName.value =
+      face.acoustic_material ||
+      face.material ||
+      "Default";
   }
+
   writeSurfaceAbsorptionBands(face.absorption);
   elements.surfaceScattering.value = clamp01(face.scattering, 0).toFixed(2);
   refreshSurfacePanel();
 }
 
 function clearSurfaceSelection() {
-  selectedSurfaceIndex = null;
-  selectedSurfaceIndices = [];
-  viewer.clearSurfaceHighlight?.();
-  refreshSurfacePanel();
+  forceSingleSurfaceSelection(null);
 }
 
 function setFaceAcousticProperties(face, absorption, scattering, wallName, materialName) {
@@ -436,7 +448,12 @@ function setFaceAcousticProperties(face, absorption, scattering, wallName, mater
 
   face.absorption = normalizeAbsorptionBands(absorption, null);
   if (!face.absorption) throw new Error("Absorption must be eight octave-band values between 0 and 1.");
+
   face.scattering = clamp01(scattering, 0);
+
+  // Remove any old artificial grouping ID. Shared names are allowed,
+  // but they must not make surfaces behave as one selected object.
+  delete face.user_surface_id;
 
   if (cleanWallName) {
     face.user_surface_name = cleanWallName;
@@ -459,28 +476,36 @@ function setFaceAcousticProperties(face, absorption, scattering, wallName, mater
 function applySurfaceProperties(mode) {
   if (!mesh) return;
 
+  if (selectedSurfaceIndex !== null && selectedSurfaceIndex !== undefined && !mesh.faces[selectedSurfaceIndex]) {
+    selectedSurfaceIndex = null;
+    selectedSurfaceIndices = [];
+  }
+
   const absorption = readSurfaceAbsorptionBands();
   const scattering = clamp01(elements.surfaceScattering.value, 0);
   const wallName = elements.surfaceName?.value || "";
   const materialName = elements.surfaceMaterialName?.value || "";
+  const originalClickedIndex = selectedSurfaceIndex;
+
   let indices = [];
 
   if (mode === "selected") {
-    // Only the currently selected/clicked surface.
+    if (selectedSurfaceIndex === null || !mesh.faces[selectedSurfaceIndex]) return;
     indices = [selectedSurfaceIndex];
 
   } else if (mode === "connected") {
-    // Copy the current surface attributes to connected coplanar surfaces,
-    // but do NOT permanently group/glue them together.
     if (selectedSurfaceIndex === null || !mesh.faces[selectedSurfaceIndex]) return;
+
+    // Apply to all connected/copanar surfaces, but do not select them as a unit.
     indices = connectedCoplanarFaceIndices(selectedSurfaceIndex);
 
   } else if (mode === "group") {
-    // Use the original imported group/material identity only.
-    // Do NOT use user_surface_id, because that is what glued connected planes together.
     if (selectedSurfaceIndex === null || !mesh.faces[selectedSurfaceIndex]) return;
 
     const selected = mesh.faces[selectedSurfaceIndex];
+
+    // Same-group means original imported group/material only.
+    // It does NOT use user_surface_id and does NOT use the new user-entered name.
     const selectedGroup =
       selected.original_group ||
       selected.imported_group ||
@@ -506,27 +531,34 @@ function applySurfaceProperties(mode) {
   }
 
   indices = [...new Set(indices)].sort((a, b) => a - b);
+
   if (!indices.length) {
     appendLog(`No surfaces matched mode=${mode}.`);
     return;
   }
 
-  if (mode === "connected") {
-    for (const index of indices) delete mesh.faces[index].user_surface_id;
-  }
+  // Remove all old artificial connected-plane grouping IDs from the whole mesh.
+  // This cleans up previous sessions where connected planes got glued together.
+  mesh.faces.forEach((face) => {
+    delete face.user_surface_id;
+  });
 
   for (const index of indices) {
     setFaceAcousticProperties(mesh.faces[index], absorption, scattering, wallName, materialName);
   }
 
-  if (mode === "selected" || mode === "group") {
-    selectSurfaceSet(indices, selectedSurfaceIndex);
-  } else if (mode === "connected") {
-    selectSurfaceSet([selectedSurfaceIndex], selectedSurfaceIndex);
+  // Critical behavior:
+  // Apply connected/group/all changes attributes on many surfaces,
+  // but only the originally clicked surface stays selected/yellow.
+  if (originalClickedIndex !== null && originalClickedIndex !== undefined && mesh.faces[originalClickedIndex]) {
+    forceSingleSurfaceSelection(originalClickedIndex);
+  } else {
+    forceSingleSurfaceSelection(null);
   }
 
-  refreshSurfacePanel();
-  appendLog(`Applied name=${wallName || "(unchanged)"}, material=${materialName || "(unchanged)"}, absorption_avg=${averageAbsorption(absorption, 0.05).toFixed(3)}, scattering=${scattering.toFixed(3)} to ${indices.length} surface(s) using mode=${mode}. Rerun ISM to use these values.`);
+  appendLog(
+    `Applied name=${wallName || "(unchanged)"}, material=${materialName || "(unchanged)"}, absorption_avg=${averageAbsorption(absorption, 0.05).toFixed(3)}, scattering=${scattering.toFixed(3)} to ${indices.length} surface(s) using mode=${mode}. Rerun ISM to use these values.`
+  );
 }
 
 viewer.setSurfaceSelectionHandler?.((faceIndex) => {
