@@ -638,7 +638,7 @@ function applySurfaceProperties(mode) {
   }
 
   const absorption = readSurfaceAbsorptionBands();
-  const scattering = clamp01(elements.surfaceScattering.value, 0);
+  const scattering = clamp01(elements.surfaceScattering?.value ?? 0, 0);
   const wallName = elements.surfaceName?.value || "";
   const materialName = elements.surfaceMaterialName?.value || "";
   const originalClickedIndex = selectedSurfaceIndex;
