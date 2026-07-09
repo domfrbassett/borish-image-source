@@ -1,0 +1,790 @@
+import { loadMeshFile, loadExampleObj } from "./meshLoaders.js";
+import { makeViewer } from "./viewer.js";
+import { downloadBase64, downloadJson, downloadText } from "./downloads.js";
+
+const elements = {
+  fileInput: document.getElementById("fileInput"),
+  loadShoebox: document.getElementById("loadShoebox"),
+  loadConcave: document.getElementById("loadConcave"),
+  checkButton: document.getElementById("checkButton"),
+  runButton: document.getElementById("runButton"),
+  downloadJson: document.getElementById("downloadJson"),
+  downloadCsv: document.getElementById("downloadCsv"),
+  downloadWav: document.getElementById("downloadWav"),
+  recordWebm: document.getElementById("recordWebm"),
+  log: document.getElementById("log"),
+  toaTable: document.getElementById("toaTable"),
+  irCanvas: document.getElementById("irCanvas"),
+  surfaceStatus: document.getElementById("surfaceStatus"),
+  surfaceName: document.getElementById("surfaceName"),
+  surfaceMaterialName: document.getElementById("surfaceMaterialName"),
+  surfaceAbsorption: document.getElementById("surfaceAbsorption"),
+  surfaceScattering: document.getElementById("surfaceScattering"),
+  applySurfaceSelected: document.getElementById("applySurfaceSelected"),
+  applySurfaceConnected: document.getElementById("applySurfaceConnected"),
+  applySurfaceGroup: document.getElementById("applySurfaceGroup"),
+  applySurfaceAll: document.getElementById("applySurfaceAll"),
+  clearSurfaceSelection: document.getElementById("clearSurfaceSelection"),
+};
+
+const viewer = makeViewer(document.getElementById("viewport"));
+const worker = new Worker(new URL("./ismWorker.js?v=20260709010639", import.meta.url), { type: "module" });
+
+let mesh = null;
+let lastSimulation = null;
+let lastFilenameBase = "borish_result";
+let selectedSurfaceIndex = null;
+let selectedSurfaceIndices = [];
+let userSurfaceCounter = 1;
+
+const OCTAVE_BANDS_HZ = [63, 125, 250, 500, 1000, 2000, 4000, 8000];
+const SURFACE_ABSORPTION_IDS = OCTAVE_BANDS_HZ.map((band) => `surfaceAbsorption${band}`);
+
+function log(message) {
+  elements.log.textContent = message;
+}
+
+function appendLog(message) {
+  elements.log.textContent += `\n${message}`;
+}
+
+function readNumber(id) {
+  const value = Number(document.getElementById(id).value);
+  if (!Number.isFinite(value)) throw new Error(`Invalid number in ${id}`);
+  return value;
+}
+
+function readVector(prefix) {
+  return [readNumber(`${prefix}X`), readNumber(`${prefix}Y`), readNumber(`${prefix}Z`)];
+}
+
+function readPayload() {
+  if (!mesh) throw new Error("Load a mesh first.");
+  const source = readVector("source");
+  const receiver = readVector("receiver");
+  return {
+    mesh,
+    source,
+    receiver,
+    options: {
+      max_order: readNumber("maxOrder"),
+      max_time_s: readNumber("maxTimeMs") / 1000.0,
+      speed_of_sound: readNumber("speedOfSound"),
+      sample_rate: readNumber("sampleRate"),
+      band_hz: "broadband",
+      ir_mode: "broadband_mono",
+      max_nodes: readNumber("maxNodes"),
+      auto_flip_normals: true,
+      surface_material_count: mesh.faces.filter(surfaceHasAssignedMaterial).length,
+    }
+  };
+}
+
+function setDefaultShoeboxPoints() {
+  document.getElementById("sourceX").value = 2;
+  document.getElementById("sourceY").value = 3;
+  document.getElementById("sourceZ").value = 1.2;
+  document.getElementById("receiverX").value = 6;
+  document.getElementById("receiverY").value = 5;
+  document.getElementById("receiverZ").value = 1.2;
+  document.getElementById("maxOrder").value = 2;
+}
+
+function setDefaultConcavePoints() {
+  document.getElementById("sourceX").value = 10;
+  document.getElementById("sourceY").value = 2;
+  document.getElementById("sourceZ").value = 1.2;
+  document.getElementById("receiverX").value = 2;
+  document.getElementById("receiverY").value = 8;
+  document.getElementById("receiverZ").value = 1.2;
+  document.getElementById("maxOrder").value = 4;
+}
+
+function updateMarkers() {
+  try {
+    viewer.setMarkers(readVector("source"), readVector("receiver"));
+  } catch (_) {}
+}
+
+function clamp01(value, fallback = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(0, Math.min(1, number));
+}
+
+function averageAbsorption(value, fallback = 0.05) {
+  if (Array.isArray(value) && value.length) {
+    const numbers = value.map(Number).filter(Number.isFinite);
+    if (numbers.length) return numbers.reduce((a, b) => a + b, 0) / numbers.length;
+  }
+  if (Number.isFinite(Number(value))) return Number(value);
+  return fallback;
+}
+
+function normalizeAbsorptionBands(value, fallback = null) {
+  let values = value;
+  if (values === undefined || values === null || values === "") {
+    if (fallback === null) return null;
+    values = fallback;
+  }
+  if (!Array.isArray(values)) values = [Number(values)];
+  values = values.map((x) => Number(x));
+  if (values.length === 1 && Number.isFinite(values[0])) values = Array(8).fill(values[0]);
+  if (values.length !== 8 || values.some((x) => !Number.isFinite(x) || x < 0 || x > 1)) return null;
+  return values.map((x) => Math.max(0, Math.min(1, x)));
+}
+
+function readSurfaceAbsorptionBands() {
+  const bandValues = SURFACE_ABSORPTION_IDS.map((id) => {
+    const element = document.getElementById(id);
+    return element ? Number(element.value) : NaN;
+  });
+
+  if (bandValues.every((x) => Number.isFinite(x))) {
+    const normalized = normalizeAbsorptionBands(bandValues);
+    if (!normalized) throw new Error("Absorption bands must be eight values between 0 and 1.");
+    return normalized;
+  }
+
+  // Backward-compatible fallback only for old DOMs without the band fields.
+  const scalar = document.getElementById("surfaceAbsorption")?.value;
+  const normalized = normalizeAbsorptionBands(Number(scalar));
+  if (!normalized) throw new Error("Surface absorption must be between 0 and 1.");
+  return normalized;
+}
+
+function writeSurfaceAbsorptionBands(value) {
+  const bands = normalizeAbsorptionBands(value, 0.05) || Array(8).fill(0.05);
+  for (const [i, id] of SURFACE_ABSORPTION_IDS.entries()) {
+    const element = document.getElementById(id);
+    if (element) element.value = bands[i].toFixed(2);
+  }
+  if (elements.surfaceAbsorption) {
+    elements.surfaceAbsorption.value = averageAbsorption(bands, 0.05).toFixed(2);
+  }
+}
+
+function surfaceHasAssignedMaterial(face) {
+  if (!face) return false;
+  const absorption = normalizeAbsorptionBands(face.absorption, null);
+  if (!absorption) return false;
+  const materialName = String(face.acoustic_material || face.material || face.material_name || "").trim();
+  return materialName.length > 0;
+}
+
+function findUnassignedSurfaces() {
+  if (!mesh) return [];
+  const missing = [];
+  mesh.faces.forEach((face, index) => {
+    if (!surfaceHasAssignedMaterial(face)) {
+      missing.push({ index, label: faceLabel(face, index) });
+    }
+  });
+  return missing;
+}
+
+function unassignedMaterialMessage(missing) {
+  const preview = missing.slice(0, 16).map((item) => `  face ${item.index}: ${item.label}`).join("\n");
+  const more = missing.length > 16 ? `\n  ... ${missing.length - 16} more` : "";
+  return [
+    "ERROR: Unassigned acoustic material coefficients.",
+    `${missing.length} surface(s) have no assigned material absorption.`,
+    "Assign wall/material name and octave-band absorption to every surface before running ISM.",
+    "Use Apply selected, Apply connected plane, Apply same group, or Apply all surfaces.",
+    preview + more,
+  ].filter(Boolean).join("\n");
+}
+
+function faceLabel(face, index) {
+  if (!face) return `Face ${index}`;
+  return (
+    face.user_surface_name ||
+    face.surface_name ||
+    face.display_name ||
+    face.name ||
+    face.group ||
+    face.object ||
+    face.material ||
+    `Face ${index}`
+  );
+}
+
+
+function vertexKey(vertex, tolerance = 1.0e-6) {
+  return vertex.map((x) => Math.round(Number(x) / tolerance)).join(",");
+}
+
+function edgeKeyFromVertexKeys(a, b) {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+function vectorSub(a, b) {
+  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+}
+
+function cross(a, b) {
+  return [
+    a[1] * b[2] - a[2] * b[1],
+    a[2] * b[0] - a[0] * b[2],
+    a[0] * b[1] - a[1] * b[0],
+  ];
+}
+
+function dot(a, b) {
+  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+function length3(v) {
+  return Math.hypot(v[0], v[1], v[2]);
+}
+
+function normalize(v) {
+  const length = length3(v);
+  if (length <= 1e-12) return null;
+  return [v[0] / length, v[1] / length, v[2] / length];
+}
+
+function faceNormalAndOffset(face) {
+  if (!mesh || !face || !face.indices || face.indices.length < 3) return null;
+  const p0 = mesh.vertices[face.indices[0]];
+  for (let i = 1; i < face.indices.length - 1; i++) {
+    const p1 = mesh.vertices[face.indices[i]];
+    const p2 = mesh.vertices[face.indices[i + 1]];
+    const n = normalize(cross(vectorSub(p1, p0), vectorSub(p2, p0)));
+    if (n) return { normal: n, offset: dot(n, p0) };
+  }
+  return null;
+}
+
+function faceEdgeKeys(face) {
+  if (!mesh || !face || !face.indices) return [];
+  const keys = face.indices.map((index) => vertexKey(mesh.vertices[index]));
+  const edges = [];
+  for (let i = 0; i < keys.length; i++) {
+    edges.push(edgeKeyFromVertexKeys(keys[i], keys[(i + 1) % keys.length]));
+  }
+  return edges;
+}
+
+function coplanarWithReference(face, referencePlane, angleToleranceDeg = 2.0, offsetTolerance = 1.0e-4) {
+  const plane = faceNormalAndOffset(face);
+  if (!plane || !referencePlane) return false;
+
+  let alignment = dot(referencePlane.normal, plane.normal);
+  let offset = plane.offset;
+  if (alignment < 0) {
+    alignment = -alignment;
+    offset = -offset;
+  }
+
+  const minAlignment = Math.cos((angleToleranceDeg * Math.PI) / 180.0);
+  return alignment >= minAlignment && Math.abs(offset - referencePlane.offset) <= offsetTolerance;
+}
+
+function connectedCoplanarFaceIndices(startFaceIndex) {
+  if (!mesh || startFaceIndex === null || startFaceIndex === undefined || !mesh.faces[startFaceIndex]) return [];
+
+  const referencePlane = faceNormalAndOffset(mesh.faces[startFaceIndex]);
+  if (!referencePlane) return [startFaceIndex];
+
+  const edgeToFaces = new Map();
+  mesh.faces.forEach((face, faceIndex) => {
+    for (const edgeKey of faceEdgeKeys(face)) {
+      if (!edgeToFaces.has(edgeKey)) edgeToFaces.set(edgeKey, []);
+      edgeToFaces.get(edgeKey).push(faceIndex);
+    }
+  });
+
+  const visited = new Set([startFaceIndex]);
+  const queue = [startFaceIndex];
+
+  while (queue.length) {
+    const currentIndex = queue.shift();
+    const currentFace = mesh.faces[currentIndex];
+
+    for (const edgeKey of faceEdgeKeys(currentFace)) {
+      for (const neighborIndex of edgeToFaces.get(edgeKey) || []) {
+        if (visited.has(neighborIndex)) continue;
+        const neighborFace = mesh.faces[neighborIndex];
+        if (!coplanarWithReference(neighborFace, referencePlane)) continue;
+        visited.add(neighborIndex);
+        queue.push(neighborIndex);
+      }
+    }
+  }
+
+  return [...visited].sort((a, b) => a - b);
+}
+
+function activeSurfaceIndices() {
+  if (Array.isArray(selectedSurfaceIndices) && selectedSurfaceIndices.length) return selectedSurfaceIndices;
+  if (selectedSurfaceIndex !== null && selectedSurfaceIndex !== undefined) return [selectedSurfaceIndex];
+  return [];
+}
+
+function userSurfaceGroupIndices(faceIndex) {
+  if (!mesh || faceIndex === null || faceIndex === undefined || !mesh.faces[faceIndex]) return [];
+  const id = mesh.faces[faceIndex].user_surface_id;
+  if (!id) return [faceIndex];
+
+  const indices = [];
+  mesh.faces.forEach((face, index) => {
+    if (face.user_surface_id === id) indices.push(index);
+  });
+  return indices;
+}
+
+function selectSurfaceSet(indices, clickedFaceIndex = null) {
+  selectedSurfaceIndices = Array.isArray(indices)
+    ? indices.filter((x) => Number.isInteger(x) && mesh?.faces?.[x])
+    : [];
+
+  if (clickedFaceIndex !== null && clickedFaceIndex !== undefined && mesh?.faces?.[clickedFaceIndex]) {
+    selectedSurfaceIndex = clickedFaceIndex;
+  } else {
+    selectedSurfaceIndex = selectedSurfaceIndices.length ? selectedSurfaceIndices[0] : null;
+  }
+
+  if (selectedSurfaceIndices.length > 1) {
+    viewer.setSurfaceHighlights?.(selectedSurfaceIndices);
+  } else if (selectedSurfaceIndex !== null && selectedSurfaceIndex !== undefined) {
+    viewer.setSurfaceHighlight?.(selectedSurfaceIndex);
+  } else {
+    viewer.clearSurfaceHighlight?.();
+  }
+}
+
+function selectedSurfaceInfo(faceIndex) {
+  if (!mesh || faceIndex === null || faceIndex === undefined || !mesh.faces[faceIndex]) {
+    return "No surface selected.";
+  }
+  const face = mesh.faces[faceIndex];
+  const absorption = averageAbsorption(face.absorption, 0.05);
+  const scattering = clamp01(face.scattering, 0);
+  const label = faceLabel(face, faceIndex);
+  const vertices = face.indices ? face.indices.length : 0;
+  const connectedCount = connectedCoplanarFaceIndices(faceIndex).length;
+  const selectedCount = activeSurfaceIndices().length;
+  const userSetCount = userSurfaceGroupIndices(faceIndex).length;
+  return [
+    selectedCount > 1
+      ? `Selected named/connected surface: ${label}`
+      : `Selected surface ${faceIndex}: ${label}`,
+    `clicked_face=${faceIndex}`,
+    `wall_name=${face.user_surface_name || face.surface_name || face.name || face.group || ""}`,
+    `material=${face.acoustic_material || face.material || "Default"}`,
+    `original_group=${face.original_group || face.imported_group || ""}`,
+    `vertices=${vertices}`,
+    `connected_coplanar_faces=${connectedCount}`,
+    `named_surface_faces=${userSetCount}`,
+    `active_selection_faces=${selectedCount}`,
+    `absorption_avg=${averageAbsorption(absorption, 0.05).toFixed(3)}`,
+    `scattering=${scattering.toFixed(3)}`,
+  ].join("\n");
+}
+
+function refreshSurfacePanel() {
+  if (!elements.surfaceStatus) return;
+
+  const hasSelection = mesh && selectedSurfaceIndex !== null && mesh.faces[selectedSurfaceIndex];
+  elements.surfaceStatus.textContent = selectedSurfaceInfo(selectedSurfaceIndex);
+
+  for (const id of ["applySurfaceSelected", "applySurfaceConnected", "applySurfaceGroup"]) {
+    if (elements[id]) elements[id].disabled = !hasSelection;
+  }
+  if (elements.applySurfaceAll) elements.applySurfaceAll.disabled = !mesh;
+  if (elements.clearSurfaceSelection) elements.clearSurfaceSelection.disabled = !hasSelection;
+}
+
+function selectSurface(faceIndex) {
+  if (faceIndex === null || faceIndex === undefined || !mesh?.faces?.[faceIndex]) {
+    selectedSurfaceIndex = null;
+    selectedSurfaceIndices = [];
+    viewer.clearSurfaceHighlight?.();
+    refreshSurfacePanel();
+    return;
+  }
+
+  const face = mesh.faces[faceIndex];
+  const namedSet = userSurfaceGroupIndices(faceIndex);
+  selectSurfaceSet(namedSet, faceIndex);
+
+  if (elements.surfaceName) {
+    elements.surfaceName.value =
+      face.user_surface_name ||
+      face.surface_name ||
+      face.display_name ||
+      face.name ||
+      face.group ||
+      face.object ||
+      `Face_${faceIndex}`;
+  }
+  if (elements.surfaceMaterialName) {
+    elements.surfaceMaterialName.value = face.acoustic_material || face.material || "Default";
+  }
+  writeSurfaceAbsorptionBands(face.absorption);
+  elements.surfaceScattering.value = clamp01(face.scattering, 0).toFixed(2);
+  refreshSurfacePanel();
+}
+
+function clearSurfaceSelection() {
+  selectedSurfaceIndex = null;
+  selectedSurfaceIndices = [];
+  viewer.clearSurfaceHighlight?.();
+  refreshSurfacePanel();
+}
+
+function setFaceAcousticProperties(face, absorption, scattering, wallName, materialName) {
+  const cleanWallName = String(wallName || "").trim();
+  const cleanMaterialName = String(materialName || "").trim();
+
+  if (!face.original_group) face.original_group = face.group || face.name || face.object || "";
+  if (!face.original_material) face.original_material = face.material || face.acoustic_material || "";
+
+  face.absorption = normalizeAbsorptionBands(absorption, null);
+  if (!face.absorption) throw new Error("Absorption must be eight octave-band values between 0 and 1.");
+  face.scattering = clamp01(scattering, 0);
+
+  if (cleanWallName) {
+    face.user_surface_name = cleanWallName;
+    face.surface_name = cleanWallName;
+    face.display_name = cleanWallName;
+    face.name = cleanWallName;
+    face.group = cleanWallName;
+    face.group_name = cleanWallName;
+  }
+
+  if (cleanMaterialName) {
+    face.material = cleanMaterialName;
+    face.acoustic_material = cleanMaterialName;
+    face.material_name = cleanMaterialName;
+  } else {
+    face.acoustic_material = face.acoustic_material || face.material || face.group || "User material";
+  }
+}
+
+function applySurfaceProperties(mode) {
+  if (!mesh) return;
+
+  const absorption = readSurfaceAbsorptionBands();
+  const scattering = clamp01(elements.surfaceScattering.value, 0);
+  const wallName = elements.surfaceName?.value || "";
+  const materialName = elements.surfaceMaterialName?.value || "";
+  let indices = [];
+
+  if (mode === "selected") {
+    indices = activeSurfaceIndices();
+  } else if (mode === "connected") {
+    if (selectedSurfaceIndex === null || !mesh.faces[selectedSurfaceIndex]) return;
+    indices = connectedCoplanarFaceIndices(selectedSurfaceIndex);
+  } else if (mode === "group") {
+    if (selectedSurfaceIndex === null || !mesh.faces[selectedSurfaceIndex]) return;
+    const selected = mesh.faces[selectedSurfaceIndex];
+    if (selected.user_surface_id) {
+      const id = selected.user_surface_id;
+      mesh.faces.forEach((face, index) => {
+        if (face.user_surface_id === id) indices.push(index);
+      });
+    } else {
+      const selectedGroup = selected.original_group || selected.imported_group || selected.group || selected.name || selected.object || selected.material || null;
+      mesh.faces.forEach((face, index) => {
+        const key = face.original_group || face.imported_group || face.group || face.name || face.object || face.material || null;
+        if (key === selectedGroup) indices.push(index);
+      });
+    }
+  } else if (mode === "all") {
+    indices = mesh.faces.map((_, index) => index);
+  }
+
+  indices = [...new Set(indices)].sort((a, b) => a - b);
+  if (!indices.length) {
+    appendLog(`No surfaces matched mode=${mode}.`);
+    return;
+  }
+
+  if (mode === "connected") {
+    const existingId = mesh.faces[selectedSurfaceIndex].user_surface_id;
+    const newId = existingId || `user_surface_${userSurfaceCounter++}`;
+    for (const index of indices) mesh.faces[index].user_surface_id = newId;
+  }
+
+  for (const index of indices) {
+    setFaceAcousticProperties(mesh.faces[index], absorption, scattering, wallName, materialName);
+  }
+
+  if (mode === "connected" || mode === "group" || mode === "selected") {
+    selectSurfaceSet(indices, selectedSurfaceIndex);
+  }
+
+  refreshSurfacePanel();
+  appendLog(`Applied name=${wallName || "(unchanged)"}, material=${materialName || "(unchanged)"}, absorption_avg=${averageAbsorption(absorption, 0.05).toFixed(3)}, scattering=${scattering.toFixed(3)} to ${indices.length} surface(s) using mode=${mode}. Rerun ISM to use these values.`);
+}
+
+viewer.setSurfaceSelectionHandler?.((faceIndex) => {
+  if (faceIndex === null || faceIndex === undefined) {
+    selectedSurfaceIndex = null;
+    selectedSurfaceIndices = [];
+    refreshSurfacePanel();
+  } else {
+    selectSurface(faceIndex);
+  }
+});
+
+async function loadMesh(newMesh, name) {
+  mesh = newMesh;
+  userSurfaceCounter = 1;
+  mesh.faces.forEach((face, index) => {
+    if (!face.original_group) face.original_group = face.group || face.name || face.object || `Face_${index}`;
+    if (!face.original_material) face.original_material = face.material || face.acoustic_material || "Default";
+  });
+  lastFilenameBase = name.replace(/\.[^.]+$/, "") || "borish_result";
+  viewer.showMesh(mesh);
+  selectedSurfaceIndex = null;
+  selectedSurfaceIndices = [];
+  refreshSurfacePanel();
+  updateMarkers();
+  lastSimulation = null;
+  setDownloadsEnabled(false);
+  log(`Loaded ${name}
+vertices=${mesh.vertices.length}
+faces=${mesh.faces.length}
+unassigned_material_surfaces=${findUnassignedSurfaces().length}
+Assign material coefficients to every surface before Run ISM.`);
+}
+
+function setDownloadsEnabled(enabled) {
+  for (const id of ["downloadJson", "downloadCsv", "downloadWav", "recordWebm"]) {
+    elements[id].disabled = !enabled;
+  }
+}
+
+function renderToaTable(rows) {
+  if (!rows || rows.length === 0) {
+    elements.toaTable.innerHTML = "<p>No arrival paths.</p>";
+    return;
+  }
+  const limited = rows.slice(0, 250);
+  const html = [
+    "<table><thead><tr>",
+    "<th>ID</th><th>Order</th><th>Abs ms</th><th>Rel ms</th><th>Length m</th><th>Amp</th><th>Ancestry</th>",
+    "</tr></thead><tbody>",
+    ...limited.map((row) => `<tr>
+      <td>${row.path_id}</td>
+      <td>${row.order}</td>
+      <td>${row.arrival_ms_absolute.toFixed(3)}</td>
+      <td>${row.arrival_ms_relative.toFixed(3)}</td>
+      <td>${row.path_length_m.toFixed(3)}</td>
+      <td>${row.amplitude.toFixed(4)}</td>
+      <td>${escapeHtml(row.ancestry)}</td>
+    </tr>`),
+    "</tbody></table>"
+  ].join("");
+  elements.toaTable.innerHTML = html;
+}
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+}
+
+function renderImpulsePlot(sparse) {
+  const canvas = elements.irCanvas;
+  const rect = canvas.getBoundingClientRect();
+  const scale = window.devicePixelRatio || 1;
+  canvas.width = Math.max(600, Math.floor(rect.width * scale));
+  canvas.height = Math.max(180, Math.floor(rect.height * scale));
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#0c1117";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (!sparse || sparse.length === 0) return;
+
+  const padL = 50 * scale;
+  const padR = 15 * scale;
+  const padT = 20 * scale;
+  const padB = 32 * scale;
+  const w = canvas.width - padL - padR;
+  const h = canvas.height - padT - padB;
+  const maxT = Math.max(...sparse.map((x) => x.time_ms), 1e-9);
+  const maxA = Math.max(...sparse.map((x) => Math.abs(x.amplitude)), 1e-9);
+
+  ctx.strokeStyle = "#293544";
+  ctx.lineWidth = 1 * scale;
+  ctx.beginPath();
+  ctx.moveTo(padL, padT);
+  ctx.lineTo(padL, padT + h);
+  ctx.lineTo(padL + w, padT + h);
+  ctx.stroke();
+
+  ctx.fillStyle = "#9fb0c1";
+  ctx.font = `${12 * scale}px ui-monospace, monospace`;
+  ctx.fillText("0 ms", padL, padT + h + 22 * scale);
+  ctx.fillText(`${maxT.toFixed(1)} ms`, padL + w - 72 * scale, padT + h + 22 * scale);
+  ctx.fillText("amp", 8 * scale, padT + 10 * scale);
+
+  for (const point of sparse) {
+    const x = padL + (point.time_ms / maxT) * w;
+    const y0 = padT + h;
+    const y1 = padT + h - (Math.abs(point.amplitude) / maxA) * h;
+    ctx.strokeStyle = point.order === 0 ? "#ffffff" : point.order === 1 ? "#61dafb" : "#a78bfa";
+    ctx.beginPath();
+    ctx.moveTo(x, y0);
+    ctx.lineTo(x, y1);
+    ctx.stroke();
+  }
+}
+
+worker.onmessage = (event) => {
+  const { type } = event.data;
+  if (type === "status") {
+    appendLog(event.data.message);
+  } else if (type === "error") {
+    log(`ERROR\n${event.data.error}\n${event.data.stack || ""}`);
+    setDownloadsEnabled(false);
+  } else if (type === "check-complete") {
+    const report = event.data.report;
+    const lines = [
+      "CLOSURE REPORT",
+      `closed=${report.closed}`,
+      `can_simulate=${report.can_simulate}`,
+      `diagnostic_open_mesh_allowed=${report.diagnostic_open_mesh_allowed}`,
+      `vertices=${report.vertex_count}`,
+      `faces=${report.face_count}`,
+      `boundary_edges=${report.boundary_edges}`,
+      `nonmanifold_edges=${report.nonmanifold_edges}`,
+      `signed_volume_m3=${Number(report.signed_volume_m3 || 0).toFixed(6)}`,
+      `normals_apparently_inward=${report.normals_apparently_inward}`,
+      `normals_flipped=${report.normals_flipped}`,
+      `source_inside=${report.source_inside_scene}`,
+      `receiver_inside=${report.receiver_inside_scene}`,
+      `direct_path_blocked=${report.direct_path_blocked}`,
+      ...(report.errors || []).map((e) => `ERROR: ${e}`),
+      ...(report.warnings || []).map((w) => `WARNING: ${w}`),
+    ];
+    log(lines.join("\n"));
+  } else if (type === "simulation-complete") {
+    lastSimulation = event.data.result;
+    const result = lastSimulation.result;
+    viewer.showPaths(result.paths);
+    viewer.animatePaths(result.paths, 9000);
+    renderToaTable(lastSimulation.toa);
+    renderImpulsePlot(lastSimulation.impulse_response.sparse);
+    setDownloadsEnabled(true);
+    const orderCounts = new Map();
+    for (const path of result.paths) orderCounts.set(path.order, (orderCounts.get(path.order) || 0) + 1);
+    const orderText = [...orderCounts.entries()].sort((a, b) => a[0] - b[0]).map(([order, count]) => `order_${order}_paths=${count}`).join("\n");
+    log([
+      "SIMULATION COMPLETE",
+      `source_inside=${result.diagnostics.source_inside_scene}`,
+      `receiver_inside=${result.diagnostics.receiver_inside_scene}`,
+      `direct_path_blocked=${result.diagnostics.direct_path_blocked}`,
+      `validity=${result.diagnostics.validity}`,
+      `patches=${result.scene.patch_count}`,
+      `triangles=${result.scene.triangle_count}`,
+      `paths=${result.paths.length}`,
+      `nodes_reflected=${result.stats.nodes_reflected}`,
+      `invalid_nodes=${result.stats.invalid_nodes}`,
+      `proximity_pruned=${result.stats.proximity_pruned_nodes}`,
+      `rejected_visibility=${result.stats.rejected_visibility}`,
+      `rejected_obstruction=${result.stats.rejected_obstruction}`,
+      `node_limit_hit=${result.stats.hit_node_limit}`,
+      orderText,
+    ].join("\n"));
+  }
+};
+
+
+if (elements.applySurfaceSelected) {
+  elements.applySurfaceSelected.addEventListener("click", () => applySurfaceProperties("selected"));
+}
+if (elements.applySurfaceConnected) {
+  elements.applySurfaceConnected.addEventListener("click", () => applySurfaceProperties("connected"));
+}
+if (elements.applySurfaceGroup) {
+  elements.applySurfaceGroup.addEventListener("click", () => applySurfaceProperties("group"));
+}
+if (elements.applySurfaceAll) {
+  elements.applySurfaceAll.addEventListener("click", () => applySurfaceProperties("all"));
+}
+if (elements.clearSurfaceSelection) {
+  elements.clearSurfaceSelection.addEventListener("click", () => clearSurfaceSelection());
+}
+refreshSurfacePanel();
+
+if (elements.surfaceAbsorption) {
+  elements.surfaceAbsorption.addEventListener("input", () => {
+    const value = Number(elements.surfaceAbsorption.value);
+    if (Number.isFinite(value)) writeSurfaceAbsorptionBands(Array(8).fill(value));
+  });
+}
+
+for (const id of ["sourceX", "sourceY", "sourceZ", "receiverX", "receiverY", "receiverZ"]) {
+  document.getElementById(id).addEventListener("input", updateMarkers);
+}
+
+elements.fileInput.addEventListener("change", async (event) => {
+  const file = event.target.files[0];
+  if (!file) return;
+  try {
+    await loadMesh(await loadMeshFile(file), file.name);
+  } catch (error) {
+    log(`ERROR loading file\n${error.message || error}`);
+  }
+});
+
+elements.loadShoebox.addEventListener("click", async () => {
+  setDefaultShoeboxPoints();
+  await loadMesh(await loadExampleObj("./examples/shoebox.obj"), "shoebox.obj");
+});
+
+elements.loadConcave.addEventListener("click", async () => {
+  setDefaultConcavePoints();
+  await loadMesh(await loadExampleObj("./examples/concave_l_room.obj"), "concave_l_room.obj");
+});
+
+elements.checkButton.addEventListener("click", () => {
+  try {
+    const payload = readPayload();
+    log("Checking mesh closure in Pyodide...");
+    worker.postMessage({ type: "check", payload });
+  } catch (error) {
+    log(`ERROR\n${error.message || error}`);
+  }
+});
+
+elements.runButton.addEventListener("click", () => {
+  try {
+    const missing = findUnassignedSurfaces();
+    if (missing.length) {
+      log(unassignedMaterialMessage(missing));
+      setDownloadsEnabled(false);
+      return;
+    }
+    const payload = readPayload();
+    viewer.setMarkers(payload.source, payload.receiver);
+    log("Starting Pyodide image-source simulation...");
+    worker.postMessage({ type: "simulate", payload });
+  } catch (error) {
+    log(`ERROR\n${error.message || error}`);
+  }
+});
+
+elements.downloadJson.addEventListener("click", () => {
+  if (lastSimulation) downloadJson(`${lastFilenameBase}_ancestry.json`, lastSimulation.result);
+});
+
+elements.downloadCsv.addEventListener("click", () => {
+  if (lastSimulation) downloadText(`${lastFilenameBase}_toa.csv`, lastSimulation.toa_csv, "text/csv");
+});
+
+elements.downloadWav.addEventListener("click", () => {
+  if (lastSimulation) downloadBase64(`${lastFilenameBase}_impulse_response.wav`, lastSimulation.wav_base64, "audio/wav");
+});
+
+elements.recordWebm.addEventListener("click", async () => {
+  if (!lastSimulation) return;
+  await viewer.recordWebm(`${lastFilenameBase}_animation.webm`, 9500);
+});
+
+// Load the reference case by default so a visitor can immediately press Run.
+setDefaultShoeboxPoints();
+loadMesh(await loadExampleObj("./examples/shoebox.obj"), "shoebox.obj").catch((error) => log(String(error)));

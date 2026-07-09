@@ -1,0 +1,7 @@
+# Display-only MTL
+newmtl Wall
+Kd 0.72 0.72 0.72
+newmtl Floor
+Kd 0.46 0.42 0.36
+newmtl Ceiling
+Kd 0.90 0.90 0.90

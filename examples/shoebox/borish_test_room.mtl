@@ -1,0 +1,10 @@
+# Visual-only OBJ material definitions.
+# Acoustic absorption is read from borish_test_materials.json.
+newmtl Floor
+Kd 0.55 0.55 0.55
+
+newmtl Ceiling
+Kd 0.90 0.90 0.90
+
+newmtl Wall
+Kd 0.75 0.75 0.75

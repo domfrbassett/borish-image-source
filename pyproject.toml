@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "borish-image-source"
+version = "1.1.0"
+description = "Jeffrey Borish-style image-source early reflections for arbitrary piecewise-planar closed 3-D rooms, with CLI and Pyodide browser API"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [{name = "OpenAI-generated implementation for Dom Bassett"}]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent"
+]
+
+[project.scripts]
+borish-cli = "borish_cli:main"
+
+[tool.setuptools]
+py-modules = ["borish_core", "borish_cli", "pyodide_api"]

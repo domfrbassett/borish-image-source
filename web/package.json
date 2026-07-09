@@ -1,0 +1,9 @@
+{
+  "name": "borish-image-source-web",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Static Pyodide/Three.js browser demo for the Borish image-source solver",
+  "scripts": {
+    "serve": "python -m http.server 8000"
+  }
+}

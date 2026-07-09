@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+title: Borish image-source early reflections
+message: Please cite Borish's 1984 paper when using this implementation.
+type: software
+version: 1.0.0
+date-released: 2026-07-08
+authors:
+  - family-names: Bassett
+    given-names: Dom
+references:
+  - type: article
+    title: Extension of the image model to arbitrary polyhedra
+    authors:
+      - family-names: Borish
+        given-names: Jeffrey
+    journal: Journal of the Acoustical Society of America
+    volume: 75
+    issue: 6
+    start: 1827
+    end: 1836
+    year: 1984
+    doi: 10.1121/1.390983

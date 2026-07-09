@@ -1,0 +1,511 @@
+:root {
+  color-scheme: dark;
+  --bg: #101317;
+  --panel: #171d24;
+  --panel2: #111820;
+  --text: #edf2f7;
+  --muted: #9fb0c1;
+  --line: #293544;
+  --accent: #82d6ff;
+  --bad: #ff8b8b;
+  --good: #9df0be;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+header, footer {
+  padding: 18px 24px;
+  border-bottom: 1px solid var(--line);
+  background: #0c1117;
+}
+header { display: flex; justify-content: space-between; gap: 20px; align-items: center; }
+h1 { margin: 0 0 4px; font-size: 24px; }
+h2 { font-size: 15px; margin: 18px 0 10px; color: var(--accent); }
+p { margin: 0; color: var(--muted); }
+a { color: var(--accent); }
+main {
+  display: grid;
+  grid-template-columns: 390px minmax(0, 1fr);
+  gap: 14px;
+  padding: 14px;
+  min-height: calc(100vh - 130px);
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+}
+.controls { overflow: auto; max-height: calc(100vh - 160px); }
+.workspace { min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+#viewport {
+  height: min(62vh, 720px);
+  min-height: 420px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: radial-gradient(circle at 30% 20%, #1e2b39 0, #0a0e13 60%);
+  overflow: hidden;
+}
+.subpanels { display: grid; grid-template-columns: 1fr 1.2fr; gap: 14px; min-height: 260px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+fieldset { border: 1px solid var(--line); border-radius: 10px; padding: 8px; }
+legend { color: var(--muted); font-size: 12px; }
+label { display: grid; grid-template-columns: 1fr 110px; align-items: center; gap: 8px; margin: 6px 0; color: var(--muted); font-size: 13px; }
+input[type="number"], input[type="file"] {
+  width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+}
+.settings { display: grid; gap: 2px; }
+.button-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+button {
+  background: #223044;
+  color: var(--text);
+  border: 1px solid #33465f;
+  border-radius: 9px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { background: #2b3c54; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+.primary button:last-child { background: #155378; border-color: #237aa9; }
+.hint { font-size: 12px; line-height: 1.4; }
+.log {
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #c7d5e2;
+  background: #0c1117;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  min-height: 130px;
+  overflow: auto;
+}
+#irCanvas { width: 100%; height: 220px; background: #0c1117; border-radius: 10px; border: 1px solid var(--line); }
+.table-wrap { overflow: auto; max-height: 310px; }
+table { border-collapse: collapse; width: 100%; font-size: 12px; }
+th, td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: right; white-space: nowrap; }
+th:first-child, td:first-child, th:last-child, td:last-child { text-align: left; }
+th { position: sticky; top: 0; background: var(--panel2); color: var(--accent); }
+footer { border-top: 1px solid var(--line); border-bottom: none; font-size: 12px; }
+@media (max-width: 980px) {
+  main { grid-template-columns: 1fr; }
+  .controls { max-height: none; }
+  .subpanels { grid-template-columns: 1fr; }
+}
+
+
+/* ---- Layout fix v2: IR below left controls, ToA below viewer ---- */
+
+:root {
+  --top-pane-height: min(62vh, 720px);
+  --bottom-pane-height: 330px;
+}
+
+body {
+  overflow-x: hidden;
+}
+
+main,
+.left-stack,
+.workspace,
+.panel,
+.controls,
+.ir-panel,
+.toa-panel {
+  min-width: 0;
+}
+
+main {
+  grid-template-columns: 390px minmax(0, 1fr);
+  align-items: start;
+}
+
+.left-stack,
+.workspace {
+  display: grid;
+  grid-template-rows: var(--top-pane-height) var(--bottom-pane-height);
+  gap: 14px;
+  min-width: 0;
+}
+
+.controls {
+  height: 100%;
+  max-height: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+#viewport {
+  height: 100%;
+  min-height: 0;
+}
+
+.ir-panel,
+.toa-panel {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.ir-panel h2,
+.toa-panel h2 {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+
+#irCanvas {
+  display: block;
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  min-height: 0;
+  background: #0c1117;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+}
+
+.table-wrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+  width: 100%;
+  max-width: 100%;
+  overflow-y: auto;
+  overflow-x: auto;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #0c1117;
+}
+
+.table-wrap table {
+  width: 100%;
+  max-width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+.table-wrap th,
+.table-wrap td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  vertical-align: top;
+}
+
+.table-wrap th:nth-child(1),
+.table-wrap td:nth-child(1) {
+  width: 52px;
+}
+
+.table-wrap th:nth-child(2),
+.table-wrap td:nth-child(2) {
+  width: 58px;
+}
+
+.table-wrap th:nth-child(3),
+.table-wrap td:nth-child(3),
+.table-wrap th:nth-child(4),
+.table-wrap td:nth-child(4),
+.table-wrap th:nth-child(5),
+.table-wrap td:nth-child(5),
+.table-wrap th:nth-child(6),
+.table-wrap td:nth-child(6) {
+  width: 82px;
+}
+
+.table-wrap th:nth-child(7),
+.table-wrap td:nth-child(7) {
+  width: auto;
+  text-align: left;
+}
+
+.subpanels {
+  display: none;
+}
+
+@media (max-width: 980px) {
+  main {
+    grid-template-columns: 1fr;
+  }
+
+  .left-stack,
+  .workspace {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .controls {
+    height: auto;
+    max-height: none;
+  }
+
+  #viewport {
+    height: 420px;
+    min-height: 420px;
+  }
+
+  .ir-panel,
+  .toa-panel {
+    height: 330px;
+  }
+}
+
+
+/* ---- Surface material picker ---- */
+.surface-status {
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #d9e7f3;
+  background: #0c1117;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  min-height: 76px;
+}
+.surface-settings label {
+  grid-template-columns: 1fr 110px;
+}
+.surface-actions button:first-child {
+  background: #614a12;
+  border-color: #a7802a;
+}
+
+
+/* ---- Surface selection clear button ---- */
+.surface-actions #clearSurfaceSelection {
+  background: #172231;
+  border-color: var(--line);
+}
+
+
+/* ---- Surface renaming and connected-plane controls ---- */
+.surface-settings input[type="text"] {
+  width: 100%;
+  min-width: 0;
+}
+.surface-actions #applySurfaceConnected {
+  background: #1d3a2c;
+  border-color: #2f7d55;
+}
+
+
+/* ---- Required materials + broadband IR patch ---- */
+.octave-absorption-grid {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  background: #0c1117;
+}
+
+.octave-absorption-grid label {
+  font-size: 0.78rem;
+}
+
+.octave-absorption-grid input {
+  width: 100%;
+}
+
+.settings .wide {
+  grid-column: 1 / -1;
+}
+
+
+
+
+/* ---- Compact absorption octave grid UI patch ---- */
+
+/* Prevent the material editor from creating a horizontal scrollbar. */
+.panel,
+.controls,
+fieldset,
+.surface-panel,
+.surface-status {
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+}
+
+.controls,
+.panel {
+  overflow-x: hidden !important;
+}
+
+/* The octave-band editor must fit inside the left column. */
+.octave-absorption-grid {
+  grid-column: 1 / -1 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  box-sizing: border-box !important;
+
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 6px !important;
+
+  padding: 0 !important;
+  margin: 4px 0 0 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  overflow: hidden !important;
+}
+
+/* Each band is a small fixed internal layout, but the cell itself can shrink. */
+.octave-absorption-grid .abs-band-cell,
+.octave-absorption-grid label {
+  min-width: 0 !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+
+  display: grid !important;
+  grid-template-columns: 44px minmax(78px, 1fr) !important;
+  align-items: center !important;
+  gap: 8px !important;
+
+  margin: 0 !important;
+  padding: 6px 7px !important;
+
+  border: 1px solid var(--line) !important;
+  background: #0c1117 !important;
+  color: var(--text) !important;
+  overflow: hidden !important;
+}
+
+/* Label block: 125 over Hz, without stealing width from the numeric input. */
+.octave-absorption-grid .abs-band-label {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
+  align-items: flex-start !important;
+  min-width: 0 !important;
+  width: 44px !important;
+  line-height: 1 !important;
+  color: var(--accent) !important;
+  overflow: hidden !important;
+}
+
+.octave-absorption-grid .abs-band-number {
+  display: block !important;
+  font-size: 0.92rem !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.01em !important;
+  white-space: nowrap !important;
+}
+
+.octave-absorption-grid .abs-band-unit {
+  display: block !important;
+  margin-top: 3px !important;
+  font-size: 0.68rem !important;
+  color: var(--muted) !important;
+  letter-spacing: 0.03em !important;
+  text-transform: uppercase !important;
+  white-space: nowrap !important;
+}
+
+/* Wider input so 0.05 is actually visible. */
+.octave-absorption-grid input[type="number"] {
+  width: 100% !important;
+  min-width: 78px !important;
+  max-width: 100% !important;
+  height: 32px !important;
+
+  box-sizing: border-box !important;
+  padding: 2px 8px !important;
+  text-align: center !important;
+
+  font-size: 0.95rem !important;
+  font-variant-numeric: tabular-nums !important;
+
+  background: #111a24 !important;
+  border: 1px solid #263545 !important;
+  color: var(--text) !important;
+}
+
+/* Very narrow panels: one clean column rather than horizontal scrolling. */
+@media (max-width: 520px) {
+  .octave-absorption-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .octave-absorption-grid .abs-band-cell,
+  .octave-absorption-grid label {
+    grid-template-columns: 54px minmax(96px, 1fr) !important;
+  }
+
+  .octave-absorption-grid input[type="number"] {
+    min-width: 96px !important;
+  }
+}
+
+/* ---- Square UI override ---- */
+:root {
+  --radius: 0px;
+}
+
+.panel,
+#viewport,
+#irCanvas,
+.table-wrap,
+.log,
+.surface-status,
+input[type="number"],
+input[type="file"],
+input[type="text"],
+button,
+fieldset,
+select,
+textarea {
+  border-radius: 0 !important;
+}
+
+.controls,
+.table-wrap,
+.log,
+.surface-status {
+  scrollbar-width: thin;
+  scrollbar-color: #3a4a5d #0c1117;
+}
+
+.controls::-webkit-scrollbar,
+.table-wrap::-webkit-scrollbar,
+.log::-webkit-scrollbar,
+.surface-status::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+.controls::-webkit-scrollbar-track,
+.table-wrap::-webkit-scrollbar-track,
+.log::-webkit-scrollbar-track,
+.surface-status::-webkit-scrollbar-track {
+  background: #0c1117;
+  border-left: 1px solid var(--line);
+}
+
+.controls::-webkit-scrollbar-thumb,
+.table-wrap::-webkit-scrollbar-thumb,
+.log::-webkit-scrollbar-thumb,
+.surface-status::-webkit-scrollbar-thumb {
+  background: #3a4a5d;
+  border: 2px solid #0c1117;
+}
+
+.controls::-webkit-scrollbar-corner,
+.table-wrap::-webkit-scrollbar-corner,
+.log::-webkit-scrollbar-corner,
+.surface-status::-webkit-scrollbar-corner {
+  background: #0c1117;
+}

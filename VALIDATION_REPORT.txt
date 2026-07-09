@@ -1,0 +1,15 @@
+BORISH VALIDATION REPORT
+package_version=1.0.0
+python=3.13.5
+platform=Linux-4.4.0-x86_64-with-glibc2.41
+sha256[borish_core.py]=1285a4611fc226cb28acf7e5650fed73d050d840cd13885adfc9ed0604d0d98d
+sha256[borish_cli.py]=9a8dc10f4ed8b8b4070adce0aaeffd62031986b780b10a7de6f1eec1f098e402
+sha256[rhino_pachyderm_bridge.py]=2f60c18ec4ca63ecbdada3d3fed7afae207265845202f9e7ec60760f942be8a2
+syntax=PASS python_files=12
+unit_tests=PASS tests_run=6
+inside_diagnostic=PASS source=True receiver=True outside=False
+order1=PASS paths=7 reflected_nodes=6 analytic_lengths=True ancestry=True
+order2=PASS paths=25 reflected_nodes=36 ancestry=True
+concave_occlusion=PASS direct_blocked=True paths=43 order2=3 order3=12 order4=28 rejected_obstruction=55 rejected_visibility=3033 nodes=3131
+outputs=PASS wav_mono=True sample_rate=48000 frames=1559 json_paths=7 csv_rows=7
+RESULT=PASS

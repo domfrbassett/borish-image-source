@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Borish Image Source Method — Browser Demo</title>
+  <link rel="stylesheet" href="./src/styles.css?v=abscompact20260709_012400">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.178.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.178.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Borish Image Source Method</h1>
+      <p>Early-reflection solver for closed piecewise-planar rooms.</p>
+    </div>
+    <div class="header-actions">
+      <a href="https://github.com/" target="_blank" rel="noreferrer">GitHub-ready static site</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="left-stack">
+    <section class="panel controls">
+      <h2>1. Geometry</h2>
+      <input id="fileInput" type="file" accept=".obj,.3dm">
+      <div class="button-row">
+        <button id="loadShoebox">Load shoebox example</button>
+        <button id="loadConcave">Load L-shaped example</button>
+      </div>
+      <p class="hint">Accepted model formats: OBJ is fully supported. 3DM import is experimental. Use a closed, watertight mesh for ISM simulation.</p>
+
+      <h2>2. Source and receiver</h2>
+      <div class="grid-2">
+        <fieldset>
+          <legend>Source XYZ, m</legend>
+          <label>X <input id="sourceX" type="number" step="0.01" value="2"></label>
+          <label>Y <input id="sourceY" type="number" step="0.01" value="3"></label>
+          <label>Z <input id="sourceZ" type="number" step="0.01" value="1.2"></label>
+        </fieldset>
+        <fieldset>
+          <legend>Receiver XYZ, m</legend>
+          <label>X <input id="receiverX" type="number" step="0.01" value="6"></label>
+          <label>Y <input id="receiverY" type="number" step="0.01" value="5"></label>
+          <label>Z <input id="receiverZ" type="number" step="0.01" value="1.2"></label>
+        </fieldset>
+      </div>
+
+      
+
+      <h2>3. Surface material</h2>
+      <p class="hint">Click a surface in the 3D viewer, then rename it and assign octave-band absorption plus scattering. Apply connected plane groups coplanar triangles that share edges, so a triangulated wall can be named and edited once.</p>
+      <div id="surfaceStatus" class="surface-status">No surface selected.</div>
+      <div class="settings surface-settings">
+        <label>Wall / plane name <input id="surfaceName" type="text" placeholder="e.g. North wall"></label>
+        <label>Material name <input id="surfaceMaterialName" type="text" placeholder="e.g. Plaster"></label>
+        <label>Set all absorption bands <input id="surfaceAbsorption" type="number" min="0" max="1" step="0.01" value="0.05"></label>
+        <div class="octave-absorption-grid" aria-label="Octave-band absorption coefficients">
+          <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">63</span><span class="abs-band-unit">Hz</span></span><input id="surfaceAbsorption63" type="number" min="0" max="1" step="0.01" value="0.05"></label>
+          <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">125</span><span class="abs-band-unit">Hz</span></span><input id="surfaceAbsorption125" type="number" min="0" max="1" step="0.01" value="0.05"></label>
+          <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">250</span><span class="abs-band-unit">Hz</span></span><input id="surfaceAbsorption250" type="number" min="0" max="1" step="0.01" value="0.05"></label>
+          <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">500</span><span class="abs-band-unit">Hz</span></span><input id="surfaceAbsorption500" type="number" min="0" max="1" step="0.01" value="0.05"></label>
+          <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">1k</span><span class="abs-band-unit">Hz</span></span><input id="surfaceAbsorption1000" type="number" min="0" max="1" step="0.01" value="0.05"></label>
+          <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">2k</span><span class="abs-band-unit">Hz</span></span><input id="surfaceAbsorption2000" type="number" min="0" max="1" step="0.01" value="0.05"></label>
+          <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">4k</span><span class="abs-band-unit">Hz</span></span><input id="surfaceAbsorption4000" type="number" min="0" max="1" step="0.01" value="0.05"></label>
+          <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">8k</span><span class="abs-band-unit">Hz</span></span><input id="surfaceAbsorption8000" type="number" min="0" max="1" step="0.01" value="0.05"></label>
+        </div>
+        <label>Surface scattering <input id="surfaceScattering" type="number" min="0" max="1" step="0.01" value="0.00"></label>
+      </div>
+      <div class="button-row surface-actions">
+        <button id="applySurfaceSelected" disabled>Apply selected</button>
+        <button id="applySurfaceConnected" disabled>Apply connected plane</button>
+        <button id="applySurfaceGroup" disabled>Apply same group</button>
+        <button id="applySurfaceAll" disabled>Apply all surfaces</button>
+        <button id="clearSurfaceSelection" disabled>Clear selection</button>
+      </div>
+      <p class="hint">Scattering is applied as loss from the specular reflection coefficient.</p>
+
+      <h2>4. Simulation</h2>
+      <div class="settings">
+        <label>Max order <input id="maxOrder" type="number" min="0" max="8" value="2"></label>
+        <label>Max time after direct, ms <input id="maxTimeMs" type="number" min="1" value="120"></label>
+        <label>Speed of sound, m/s <input id="speedOfSound" type="number" min="1" value="343"></label>
+        <label>Sample rate <input id="sampleRate" type="number" min="8000" value="48000"></label>
+        <label>Max nodes <input id="maxNodes" type="number" min="1" value="250000"></label>
+        <p class="hint wide">All surfaces must have assigned material absorption before simulation.</p>
+      </div>
+      <div class="button-row primary">
+        <button id="checkButton">Check closure</button>
+        <button id="runButton">Run ISM</button>
+      </div>
+
+      <h2>5. Downloads</h2>
+      <div class="button-row downloads">
+        <button id="downloadJson" disabled>JSON ancestry</button>
+        <button id="downloadCsv" disabled>ToA CSV</button>
+        <button id="downloadWav" disabled>WAV IR</button>
+        <button id="recordWebm" disabled>Record WebM</button>
+      </div>
+
+      <pre id="log" class="log">Load a mesh or choose an example.</pre>
+    </section>
+      <section class="panel ir-panel">
+        <h2>Impulse response</h2>
+        <canvas id="irCanvas" width="1200" height="320"></canvas>
+      </section>
+    </section>
+
+    <section class="workspace">
+      <div id="viewport"></div>
+
+      <section class="panel toa-panel">
+        <h2>Time of arrival / ancestry</h2>
+        <div id="toaTable" class="table-wrap"></div>
+      </section>
+    </section>
+  </main>
+
+  <footer>
+    <p>Based on Jeffrey Borish's arbitrary-polyhedron image-source algorithm.</p>
+  </footer>
+
+  <script type="module" src="./src/main.js?v=blankfix20260709_011157"></script>
+</body>
+</html>
