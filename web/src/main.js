@@ -26,7 +26,12 @@ const elements = {
   applySurfaceAll: document.getElementById("applySurfaceAll"),
   clearSurfaceSelection: document.getElementById("clearSurfaceSelection"),
   irBandSelect: document.getElementById("irBandSelect"),
-  fftCanvas: document.getElementById("fftCanvas"),
+  irToolbar: document.getElementById("irToolbar"),
+  plotTitle: document.getElementById("plotTitle"),
+  plotPrev: document.getElementById("plotPrev"),
+  plotNext: document.getElementById("plotNext"),
+  plotViewName: document.getElementById("plotViewName"),
+  fftCanvas: document.getElementById("fftCanvas"), // legacy: no longer used after plot toggle
 };
 
 const viewer = makeViewer(document.getElementById("viewport"));
@@ -38,6 +43,8 @@ let lastFilenameBase = "borish_result";
 let selectedSurfaceIndex = null;
 let selectedSurfaceIndices = [];
 let userSurfaceCounter = 1;
+let plotView = "ir";
+let isSyncingSurfaceUi = false;
 
 const OCTAVE_BANDS_HZ = [63, 125, 250, 500, 1000, 2000, 4000, 8000];
 const SURFACE_ABSORPTION_IDS = OCTAVE_BANDS_HZ.map((band) => `surfaceAbsorption${band}`);
@@ -126,6 +133,7 @@ function averageAbsorption(value, fallback = 0.05) {
 
 function readAirOptions() {
   return {
+    enabled: document.getElementById("airAttenuationEnabled")?.checked ?? true,
     temperature_c: Number(document.getElementById("airTemperatureC")?.value ?? 20),
     relative_humidity_percent: Number(document.getElementById("airRelativeHumidity")?.value ?? 50),
     pressure_kpa: Number(document.getElementById("airPressureKPa")?.value ?? 101.325),
@@ -179,7 +187,7 @@ function airAbsorptionDbPerMISO9613(frequencyHz, temperatureC = 20, relativeHumi
 function airAbsorptionDbPerMByBand() {
   const air = readAirOptions();
 
-  return OCTAVE_BANDS_HZ.map(() => 0);
+  if (!air.enabled) return OCTAVE_BANDS_HZ.map(() => 0);
 
   return OCTAVE_BANDS_HZ.map((frequencyHz) =>
     airAbsorptionDbPerMISO9613(
@@ -292,6 +300,8 @@ function faceLabel(face, index) {
     face.user_surface_name ||
     face.surface_name ||
     face.display_name ||
+    face.original_name ||
+    face.original_group ||
     face.name ||
     face.group ||
     face.object ||
@@ -469,8 +479,8 @@ function selectedSurfaceInfo(faceIndex) {
   return [
     `Selected surface ${faceIndex}: ${label}`,
     `clicked_face=${faceIndex}`,
-    `wall_name=${face.user_surface_name || face.surface_name || face.name || face.group || ""}`,
-    `material=${face.acoustic_material || face.material || "Default"}`,
+    `wall_name=${face.user_surface_name || face.surface_name || face.display_name || face.original_name || face.name || face.group || ""}`,
+    `material=${face.acoustic_material || face.material_name || face.user_material_name || face.original_material || face.material || "Default"}`,
     `original_group=${face.original_group || face.imported_group || ""}`,
     `vertices=${vertices}`,
     `connected_coplanar_apply_targets=${connectedCount}`,
@@ -494,6 +504,59 @@ function refreshSurfacePanel() {
   if (elements.clearSurfaceSelection) elements.clearSurfaceSelection.disabled = !hasSelection;
 }
 
+function syncSurfaceUiFromFace(face, faceIndex) {
+  isSyncingSurfaceUi = true;
+
+  try {
+    if (elements.surfaceName) {
+      elements.surfaceName.value =
+        face.user_surface_name ||
+        face.surface_name ||
+        face.display_name ||
+        face.original_name ||
+        face.original_group ||
+        face.name ||
+        face.group ||
+        face.object ||
+        `Face_${faceIndex}`;
+    }
+
+    if (elements.surfaceMaterialName) {
+      elements.surfaceMaterialName.value =
+        face.acoustic_material ||
+        face.material_name ||
+        face.user_material_name ||
+        face.original_material ||
+        face.material ||
+        "Default";
+    }
+
+    writeSurfaceAbsorptionBands(face.absorption);
+
+    if (elements.surfaceScattering) {
+      elements.surfaceScattering.value = clamp01(face.scattering, 0).toFixed(2);
+    }
+  } finally {
+    isSyncingSurfaceUi = false;
+  }
+}
+
+function persistCurrentSurfaceInputsToSelectedFace() {
+  if (isSyncingSurfaceUi) return;
+  if (!mesh || selectedSurfaceIndex === null || selectedSurfaceIndex === undefined) return;
+  if (!mesh.faces[selectedSurfaceIndex]) return;
+
+  setFaceAcousticProperties(
+    mesh.faces[selectedSurfaceIndex],
+    readSurfaceAbsorptionBands(),
+    clamp01(elements.surfaceScattering?.value, 0),
+    elements.surfaceName?.value || "",
+    elements.surfaceMaterialName?.value || ""
+  );
+
+  refreshSurfacePanel();
+}
+
 function selectSurface(faceIndex) {
   if (faceIndex === null || faceIndex === undefined || !mesh?.faces?.[faceIndex]) {
     forceSingleSurfaceSelection(null);
@@ -504,27 +567,7 @@ function selectSurface(faceIndex) {
 
   // Always select only the clicked face/plane.
   forceSingleSurfaceSelection(faceIndex);
-
-  if (elements.surfaceName) {
-    elements.surfaceName.value =
-      face.user_surface_name ||
-      face.surface_name ||
-      face.display_name ||
-      face.name ||
-      face.group ||
-      face.object ||
-      `Face_${faceIndex}`;
-  }
-
-  if (elements.surfaceMaterialName) {
-    elements.surfaceMaterialName.value =
-      face.acoustic_material ||
-      face.material ||
-      "Default";
-  }
-
-  writeSurfaceAbsorptionBands(face.absorption);
-  elements.surfaceScattering.value = clamp01(face.scattering, 0).toFixed(2);
+  syncSurfaceUiFromFace(face, faceIndex);
   refreshSurfacePanel();
 }
 
@@ -666,6 +709,7 @@ function applySurfaceProperties(mode) {
   // the yellow selection must return to only the originally clicked face.
   if (originalClickedIndex !== null && originalClickedIndex !== undefined && mesh.faces[originalClickedIndex]) {
     forceSingleSurfaceSelection(originalClickedIndex);
+    syncSurfaceUiFromFace(mesh.faces[originalClickedIndex], originalClickedIndex);
   } else {
     forceSingleSurfaceSelection(null);
   }
@@ -960,7 +1004,7 @@ function computeMagnitudeSpectrumDb(sparse, sampleRate) {
 }
 
 function renderFftPlot(sparse) {
-  const canvas = elements.fftCanvas;
+  const canvas = elements.irCanvas;
   if (!canvas) return;
 
   const sampleRate = readNumber("sampleRate");
@@ -1172,7 +1216,28 @@ function sparseIrForBand(simulation, bandValue) {
   }));
 }
 
+function updatePlotControls() {
+  const showingIr = plotView === "ir";
+
+  if (elements.plotTitle) {
+    elements.plotTitle.textContent = showingIr ? "Impulse response" : "Frequency response";
+  }
+
+  if (elements.plotViewName) {
+    elements.plotViewName.textContent = showingIr ? "IR" : "FFT";
+  }
+
+  if (elements.plotPrev) elements.plotPrev.disabled = showingIr;
+  if (elements.plotNext) elements.plotNext.disabled = !showingIr;
+
+  if (elements.irToolbar) {
+    elements.irToolbar.classList.toggle("hidden", !showingIr);
+  }
+}
+
 function redrawSelectedIrView() {
+  updatePlotControls();
+
   const view = elements.irBandSelect?.value || "broadband";
 
   const allViews = [
@@ -1194,8 +1259,11 @@ function redrawSelectedIrView() {
 
   const selectedSparse = sparseIrForBand(lastSimulation, view);
 
-  renderImpulsePlot(selectedSparse, fixedMaxA);
-  renderFftPlot(selectedSparse);
+  if (plotView === "fft") {
+    renderFftPlot(selectedSparse);
+  } else {
+    renderImpulsePlot(selectedSparse, fixedMaxA);
+  }
 }
 
 worker.onmessage = (event) => {
@@ -1282,9 +1350,44 @@ refreshSurfacePanel();
 if (elements.surfaceAbsorption) {
   elements.surfaceAbsorption.addEventListener("input", () => {
     const value = Number(elements.surfaceAbsorption.value);
-    if (Number.isFinite(value)) writeSurfaceAbsorptionBands(Array(8).fill(value));
+    if (Number.isFinite(value)) {
+      writeSurfaceAbsorptionBands(Array(8).fill(value));
+      persistCurrentSurfaceInputsToSelectedFace();
+    }
   });
 }
+
+for (const id of SURFACE_ABSORPTION_IDS) {
+  const element = document.getElementById(id);
+  if (!element) continue;
+  element.addEventListener("input", () => {
+    const bands = readSurfaceAbsorptionBands();
+    if (elements.surfaceAbsorption) {
+      elements.surfaceAbsorption.value = averageAbsorption(bands, 0.05).toFixed(2);
+    }
+    persistCurrentSurfaceInputsToSelectedFace();
+  });
+}
+
+for (const element of [elements.surfaceName, elements.surfaceMaterialName, elements.surfaceScattering]) {
+  if (!element) continue;
+  element.addEventListener("input", persistCurrentSurfaceInputsToSelectedFace);
+}
+
+if (elements.plotPrev) {
+  elements.plotPrev.addEventListener("click", () => {
+    plotView = "ir";
+    redrawSelectedIrView();
+  });
+}
+
+if (elements.plotNext) {
+  elements.plotNext.addEventListener("click", () => {
+    plotView = "fft";
+    redrawSelectedIrView();
+  });
+}
+
 
 for (const id of ["sourceX", "sourceY", "sourceZ", "receiverX", "receiverY", "receiverZ"]) {
   document.getElementById(id).addEventListener("input", updateMarkers);
@@ -1353,6 +1456,9 @@ elements.recordWebm.addEventListener("click", async () => {
   if (!lastSimulation) return;
   await viewer.recordWebm(`${lastFilenameBase}_animation.webm`, 9500);
 });
+
+updatePlotControls();
+redrawSelectedIrView();
 
 // Load the reference case by default so a visitor can immediately press Run.
 setDefaultShoeboxPoints();

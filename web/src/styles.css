@@ -610,3 +610,109 @@ textarea {
   border-radius: 0 !important;
   padding: 4px 10px !important;
 }
+
+/* ---- Single-window IR/FFT plot toggle ---- */
+.ir-panel {
+  height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.plot-panel-header {
+  flex: 0 0 auto !important;
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  gap: 10px !important;
+  margin: 0 0 8px 0 !important;
+}
+
+.plot-panel-header h2 {
+  margin: 0 !important;
+  min-width: 120px !important;
+}
+
+.plot-controls {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+  gap: 8px !important;
+  min-width: 0 !important;
+}
+
+.ir-toolbar {
+  margin: 0 !important;
+}
+
+.ir-toolbar.hidden {
+  display: none !important;
+}
+
+.ir-toolbar label {
+  margin: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  white-space: nowrap !important;
+}
+
+.ir-toolbar select {
+  min-width: 150px !important;
+  max-width: 160px !important;
+  height: 30px !important;
+  padding: 2px 8px !important;
+}
+
+.plot-nav {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  white-space: nowrap !important;
+}
+
+.plot-nav button {
+  width: 30px !important;
+  height: 30px !important;
+  padding: 0 !important;
+  line-height: 1 !important;
+  font-size: 20px !important;
+}
+
+.plot-nav button:disabled {
+  opacity: 0.25 !important;
+  cursor: default !important;
+}
+
+#plotViewName {
+  min-width: 32px !important;
+  text-align: center !important;
+  color: var(--muted) !important;
+  font-size: 12px !important;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace !important;
+}
+
+#irCanvas.plot-canvas,
+#irCanvas {
+  flex: 1 1 auto !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  min-height: 0 !important;
+  display: block !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+  border: 1px solid var(--line) !important;
+  background: #0c1117 !important;
+  border-radius: 0 !important;
+}
+
+#fftCanvas,
+.plot-subtitle {
+  display: none !important;
+}
+
+.air-attenuation-box {
+  grid-column: 1 / -1 !important;
+}

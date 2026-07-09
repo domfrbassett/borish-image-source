@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Borish Image Source Method — Browser Demo</title>
-  <link rel="stylesheet" href="./src/styles.css?v=abscompact20260709_012400">
+  <link rel="stylesheet" href="./src/styles.css?v=plot_toggle_surfacefix_20260709">
   <script type="importmap">
   {
     "imports": {
@@ -124,28 +124,36 @@
       <pre id="log" class="log">Load a mesh or choose an example.</pre>
     </section>
       <section class="panel ir-panel">
-        <h2>Impulse response</h2>
-        <div class="ir-toolbar">
-          <label>
-            IR view
-            <select id="irBandSelect">
-              <option value="broadband">Broadband</option>
-              <option value="0">63 Hz</option>
-              <option value="1">125 Hz</option>
-              <option value="2">250 Hz</option>
-              <option value="3">500 Hz</option>
-              <option value="4">1 kHz</option>
-              <option value="5">2 kHz</option>
-              <option value="6">4 kHz</option>
-              <option value="7">8 kHz</option>
-            </select>
-          </label>
+        <div class="plot-panel-header">
+          <h2 id="plotTitle">Impulse response</h2>
+
+          <div class="plot-controls">
+            <div class="ir-toolbar" id="irToolbar">
+              <label>
+                IR view
+                <select id="irBandSelect">
+                  <option value="broadband">Broadband</option>
+                  <option value="0">63 Hz</option>
+                  <option value="1">125 Hz</option>
+                  <option value="2">250 Hz</option>
+                  <option value="3">500 Hz</option>
+                  <option value="4">1 kHz</option>
+                  <option value="5">2 kHz</option>
+                  <option value="6">4 kHz</option>
+                  <option value="7">8 kHz</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="plot-nav" aria-label="Plot view navigation">
+              <button id="plotPrev" type="button" title="Impulse response">‹</button>
+              <span id="plotViewName">IR</span>
+              <button id="plotNext" type="button" title="Frequency response">›</button>
+            </div>
+          </div>
         </div>
 
         <canvas id="irCanvas" class="plot-canvas"></canvas>
-
-        <h3 class="plot-subtitle">Frequency response</h3>
-        <canvas id="fftCanvas" class="plot-canvas"></canvas>
       </section>
     </section>
 
@@ -163,6 +171,6 @@
     <p>Based on Jeffrey Borish's arbitrary-polyhedron image-source algorithm.</p>
   </footer>
 
-  <script type="module" src="./src/main.js?v=blankfix20260709_011157"></script>
+  <script type="module" src="./src/main.js?v=plot_toggle_surfacefix_20260709"></script>
 </body>
 </html>
