@@ -655,38 +655,48 @@ function renderImpulsePlot(sparse, fixedMaxA = null) {
   const canvas = elements.irCanvas;
   const rect = canvas.getBoundingClientRect();
   const scale = window.devicePixelRatio || 1;
+
   canvas.width = Math.max(600, Math.floor(rect.width * scale));
   canvas.height = Math.max(180, Math.floor(rect.height * scale));
 
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
   ctx.fillStyle = "#0c1117";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   if (!sparse || sparse.length === 0) return;
 
-  const padL = 70 * scale;
-  const padR = 15 * scale;
-  const padT = 22 * scale;
-  const padB = 34 * scale;
+  const padL = 72 * scale;
+  const padR = 16 * scale;
+  const padT = 24 * scale;
+  const padB = 36 * scale;
+
   const w = canvas.width - padL - padR;
   const h = canvas.height - padT - padB;
 
-  const maxT = Math.max(...sparse.map((x) => x.time_ms), 1e-9);
+  const maxT = Math.max(...sparse.map((x) => Number(x.time_ms) || 0), 1e-9);
 
-  const maxA =
+  const refA =
     Number.isFinite(Number(fixedMaxA)) && Number(fixedMaxA) > 0
       ? Number(fixedMaxA)
-      : Math.max(...sparse.map((x) => Math.abs(x.amplitude)), 1e-9);
+      : Math.max(...sparse.map((x) => Math.abs(Number(x.amplitude) || 0)), 1e-9);
 
-  function yForAmplitude(value) {
-    return padT + h - (Math.abs(value) / maxA) * h;
+  const dbFloor = -60;
+
+  function ampToDb(amp) {
+    const a = Math.max(Math.abs(Number(amp) || 0), 1e-12);
+    return 20 * Math.log10(a / refA);
   }
 
+  function yForDb(db) {
+    const clamped = Math.max(dbFloor, Math.min(0, db));
+    return padT + ((0 - clamped) / (0 - dbFloor)) * h;
+  }
+
+  // axes
   ctx.strokeStyle = "#293544";
   ctx.lineWidth = 1 * scale;
-
-  // y-axis and x-axis
   ctx.beginPath();
   ctx.moveTo(padL, padT);
   ctx.lineTo(padL, padT + h);
@@ -695,35 +705,29 @@ function renderImpulsePlot(sparse, fixedMaxA = null) {
 
   ctx.font = `${11 * scale}px ui-monospace, monospace`;
   ctx.fillStyle = "#9fb0c1";
-  ctx.textAlign = "right";
   ctx.textBaseline = "middle";
 
-  // y-axis tick values
-  const yTicks = [
-    { value: maxA, label: maxA.toFixed(3) },
-    { value: maxA * 0.5, label: (maxA * 0.5).toFixed(3) },
-    { value: 0, label: "0" },
-  ];
+  // y-axis ticks in dB relative to plot full-scale/reference
+  const yTicks = [0, -6, -12, -24, -36, -48, -60];
 
-  for (const tick of yTicks) {
-    const y = yForAmplitude(tick.value);
+  for (const db of yTicks) {
+    const y = yForDb(db);
 
-    ctx.strokeStyle = "#293544";
+    ctx.strokeStyle = db === 0 || db === dbFloor ? "#293544" : "#1d2733";
+    ctx.beginPath();
+    ctx.moveTo(padL, y);
+    ctx.lineTo(padL + w, y);
+    ctx.stroke();
+
+    ctx.strokeStyle = "#9fb0c1";
     ctx.beginPath();
     ctx.moveTo(padL - 5 * scale, y);
     ctx.lineTo(padL, y);
     ctx.stroke();
 
     ctx.fillStyle = "#9fb0c1";
-    ctx.fillText(tick.label, padL - 8 * scale, y);
-
-    if (tick.value > 0 && tick.value < maxA) {
-      ctx.strokeStyle = "#1d2733";
-      ctx.beginPath();
-      ctx.moveTo(padL, y);
-      ctx.lineTo(padL + w, y);
-      ctx.stroke();
-    }
+    ctx.textAlign = "right";
+    ctx.fillText(`${db} dB`, padL - 8 * scale, y);
   }
 
   // x-axis labels
@@ -734,12 +738,13 @@ function renderImpulsePlot(sparse, fixedMaxA = null) {
   ctx.textAlign = "right";
   ctx.fillText(`${maxT.toFixed(1)} ms`, padL + w, padT + h + 22 * scale);
 
-  // axis title
+  // y-axis title
   ctx.save();
   ctx.translate(14 * scale, padT + h / 2);
   ctx.rotate(-Math.PI / 2);
   ctx.textAlign = "center";
-  ctx.fillText("amplitude", 0, 0);
+  ctx.textBaseline = "middle";
+  ctx.fillText("dBrFS", 0, 0);
   ctx.restore();
 
   // selected IR view label
@@ -752,9 +757,10 @@ function renderImpulsePlot(sparse, fixedMaxA = null) {
 
   // impulse spikes
   for (const point of sparse) {
-    const x = padL + (point.time_ms / maxT) * w;
+    const x = padL + ((Number(point.time_ms) || 0) / maxT) * w;
+    const db = ampToDb(point.amplitude);
     const y0 = padT + h;
-    const y1 = padT + h - Math.min(1, Math.abs(point.amplitude) / maxA) * h;
+    const y1 = yForDb(db);
 
     ctx.strokeStyle =
       point.order === 0 ? "#ffffff" : point.order === 1 ? "#61dafb" : "#a78bfa";

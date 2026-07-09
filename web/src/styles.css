@@ -509,3 +509,28 @@ textarea {
 .surface-status::-webkit-scrollbar-corner {
   background: #0c1117;
 }
+
+.ir-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin: 0 0 8px 0;
+}
+
+.ir-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.ir-toolbar select {
+  min-width: 150px;
+  height: 30px;
+  background: #111a24;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 0;
+  padding: 2px 8px;
+}
