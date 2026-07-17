@@ -44,6 +44,7 @@ let selectedSurfaceIndex = null;
 let selectedSurfaceIndices = [];
 let userSurfaceCounter = 1;
 let plotView = "ir";
+const PLOT_VIEWS = ["ir", "fft", "polar"];
 let isSyncingSurfaceUi = false;
 
 const OCTAVE_BANDS_HZ = [63, 125, 250, 500, 1000, 2000, 4000, 8000];
@@ -86,6 +87,7 @@ function readPayload() {
       auto_flip_normals: true,
       surface_material_count: mesh.faces.filter(surfaceHasAssignedMaterial).length,
       air_attenuation: readAirOptions(),
+      air_attenuation_db_per_m: broadbandAirAttenuationDbPerM(),
     }
   };
 }
@@ -199,6 +201,12 @@ function airAbsorptionDbPerMByBand() {
       air.pressure_kpa
     )
   );
+}
+
+function broadbandAirAttenuationDbPerM() {
+  const coefficients = airAbsorptionDbPerMByBand();
+  if (!coefficients.length) return 0;
+  return coefficients.reduce((sum, value) => sum + value, 0) / coefficients.length;
 }
 
 function airGainForBand(pathLengthM, directDistanceM, bandIndex, normalizeToDirect = true) {
@@ -1195,6 +1203,76 @@ function renderFftPlot(sparse) {
   ctx.stroke();
 }
 
+function renderPolarPowerPlot(analysis) {
+  const canvas = elements.irCanvas;
+  if (!canvas) return;
+
+  const bins = analysis?.polar_power?.bins || [];
+  const rect = canvas.getBoundingClientRect();
+  const scale = window.devicePixelRatio || 1;
+
+  canvas.width = Math.max(600, Math.floor(rect.width * scale));
+  canvas.height = Math.max(180, Math.floor(rect.height * scale));
+
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#0c1117";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+  const radius = Math.max(20 * scale, Math.min(canvas.width, canvas.height) * 0.38);
+
+  ctx.strokeStyle = "#293544";
+  ctx.lineWidth = 1 * scale;
+  for (const factor of [0.25, 0.5, 0.75, 1.0]) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius * factor, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  for (const angleDeg of [-90, 0, 90, 180]) {
+    const angle = ((angleDeg - 90) * Math.PI) / 180;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(angle) * radius, cy + Math.sin(angle) * radius);
+    ctx.stroke();
+  }
+
+  ctx.font = `${11 * scale}px ui-monospace, monospace`;
+  ctx.fillStyle = "#9fb0c1";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("0", cx, cy - radius - 12 * scale);
+  ctx.fillText("-90", cx - radius - 20 * scale, cy);
+  ctx.fillText("+90", cx + radius + 22 * scale, cy);
+  ctx.fillText("180", cx, cy + radius + 14 * scale);
+
+  if (!bins.length) return;
+
+  ctx.strokeStyle = "#61dafb";
+  ctx.fillStyle = "rgba(97, 218, 251, 0.24)";
+  ctx.lineWidth = 2 * scale;
+  ctx.beginPath();
+  let started = false;
+  for (const bin of bins.concat(bins[0])) {
+    const relativePower = Math.max(0, Math.min(1, Number(bin.relative_power) || 0));
+    const r = Math.sqrt(relativePower) * radius;
+    const angle = ((Number(bin.center_deg) - 90) * Math.PI) / 180;
+    const x = cx + Math.cos(angle) * r;
+    const y = cy + Math.sin(angle) * r;
+    if (!started) {
+      ctx.moveTo(x, y);
+      started = true;
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+}
+
 function distance3(a, b) {
   return Math.hypot(
     Number(a[0]) - Number(b[0]),
@@ -1288,18 +1366,25 @@ function sparseIrForBand(simulation, bandValue) {
 }
 
 function updatePlotControls() {
+  const viewIndex = Math.max(0, PLOT_VIEWS.indexOf(plotView));
   const showingIr = plotView === "ir";
 
   if (elements.plotTitle) {
-    elements.plotTitle.textContent = showingIr ? "Impulse response" : "Frequency response";
+    elements.plotTitle.textContent =
+      plotView === "ir" ? "Impulse response" :
+      plotView === "fft" ? "Frequency response" :
+      "Polar power";
   }
 
   if (elements.plotViewName) {
-    elements.plotViewName.textContent = showingIr ? "IR" : "FFT";
+    elements.plotViewName.textContent =
+      plotView === "ir" ? "IR" :
+      plotView === "fft" ? "FFT" :
+      "Polar";
   }
 
-  if (elements.plotPrev) elements.plotPrev.disabled = showingIr;
-  if (elements.plotNext) elements.plotNext.disabled = !showingIr;
+  if (elements.plotPrev) elements.plotPrev.disabled = viewIndex <= 0;
+  if (elements.plotNext) elements.plotNext.disabled = viewIndex >= PLOT_VIEWS.length - 1;
 
   if (elements.irToolbar) {
     elements.irToolbar.classList.toggle("hidden", !showingIr);
@@ -1330,7 +1415,9 @@ function redrawSelectedIrView() {
 
   const selectedSparse = sparseIrForBand(lastSimulation, view);
 
-  if (plotView === "fft") {
+  if (plotView === "polar") {
+    renderPolarPowerPlot(lastSimulation?.result?.analysis);
+  } else if (plotView === "fft") {
     renderFftPlot(selectedSparse);
   } else {
     renderImpulsePlot(selectedSparse, fixedMaxA);
@@ -1371,7 +1458,7 @@ worker.onmessage = (event) => {
     viewer.showPaths(result.paths);
     viewer.animatePaths(result.paths, 9000);
     renderToaTable(lastSimulation.toa);
-    redrawSelectedIrView();;
+    redrawSelectedIrView();
     setDownloadsEnabled(true);
     const orderCounts = new Map();
     for (const path of result.paths) orderCounts.set(path.order, (orderCounts.get(path.order) || 0) + 1);
@@ -1388,9 +1475,12 @@ worker.onmessage = (event) => {
       `nodes_reflected=${result.stats.nodes_reflected}`,
       `invalid_nodes=${result.stats.invalid_nodes}`,
       `proximity_pruned=${result.stats.proximity_pruned_nodes}`,
+      `order_pruned=${result.stats.order_pruned_nodes}`,
       `rejected_visibility=${result.stats.rejected_visibility}`,
       `rejected_obstruction=${result.stats.rejected_obstruction}`,
       `node_limit_hit=${result.stats.hit_node_limit}`,
+      `complete_within_time_radius=${result.diagnostics.completeness?.complete_within_time_radius}`,
+      ...(result.diagnostics.completeness?.warnings || []).map((warning) => `WARNING: ${warning}`),
       orderText,
     ].join("\n"));
   }
@@ -1447,14 +1537,16 @@ for (const element of [elements.surfaceName, elements.surfaceMaterialName, eleme
 
 if (elements.plotPrev) {
   elements.plotPrev.addEventListener("click", () => {
-    plotView = "ir";
+    const index = Math.max(0, PLOT_VIEWS.indexOf(plotView));
+    plotView = PLOT_VIEWS[Math.max(0, index - 1)];
     redrawSelectedIrView();
   });
 }
 
 if (elements.plotNext) {
   elements.plotNext.addEventListener("click", () => {
-    plotView = "fft";
+    const index = Math.max(0, PLOT_VIEWS.indexOf(plotView));
+    plotView = PLOT_VIEWS[Math.min(PLOT_VIEWS.length - 1, index + 1)];
     redrawSelectedIrView();
   });
 }

@@ -389,6 +389,19 @@ def scene_from_mesh_json(
 
 
 def _result_to_dict(result: SimulationResult, scene: Scene, ir_scale: Optional[float]) -> Dict[str, Any]:
+    direct_distance = math.dist(result.source, result.receiver)
+    if result.config.time_reference == "direct":
+        max_path_length = direct_distance + result.config.max_time_s * result.config.speed_of_sound
+    else:
+        max_path_length = result.config.max_time_s * result.config.speed_of_sound
+    completeness_warnings = []
+    if result.stats.hit_node_limit:
+        completeness_warnings.append("Traversal stopped at max_nodes before the Borish proximity tree was exhausted.")
+    if result.stats.order_pruned_nodes:
+        completeness_warnings.append(
+            "Traversal stopped at max_order for still-proximate virtual sources; paths inside the time radius may be missing."
+        )
+
     payload: Dict[str, Any] = {
         "format": "borish-browser-early-reflections-v1",
         "source": _vec_list(result.source),
@@ -421,6 +434,14 @@ def _result_to_dict(result: SimulationResult, scene: Scene, ir_scale: Optional[f
                 endpoint_epsilon=result.config.endpoint_epsilon,
             ),
             "ir_scale": ir_scale,
+            "completeness": {
+                "borish_time_radius_s": result.config.max_time_s,
+                "max_path_length_m": max_path_length,
+                "order_limited": bool(result.stats.order_pruned_nodes),
+                "node_limited": bool(result.stats.hit_node_limit),
+                "complete_within_time_radius": not result.stats.hit_node_limit and not result.stats.order_pruned_nodes,
+                "warnings": completeness_warnings,
+            },
         },
         "paths": [],
     }
@@ -449,7 +470,13 @@ def _result_to_dict(result: SimulationResult, scene: Scene, ir_scale: Optional[f
             "direction_of_arrival": _vec_list(event.direction_of_arrival),
             "azimuth_deg": event.azimuth_deg,
             "elevation_deg": event.elevation_deg,
+            "source_relative_azimuth_deg": event.source_relative_azimuth_deg,
+            "band_amplitudes": [
+                _event_band_amplitude(event, scene, result, band_index)
+                for band_index in range(len(OCTAVE_BANDS_HZ))
+            ],
         })
+    payload["analysis"] = _directional_analysis(result, scene)
     return payload
 
 
@@ -482,6 +509,7 @@ def _toa_table(result: SimulationResult, scene: Scene) -> List[Dict[str, Any]]:
             "path_length_m": event.path_length_m,
             "amplitude": event.amplitude,
             "azimuth_deg": event.azimuth_deg,
+            "source_relative_azimuth_deg": event.source_relative_azimuth_deg,
             "elevation_deg": event.elevation_deg,
             "ancestry": "Direct" if not names else " -> ".join(names),
         })
@@ -510,6 +538,75 @@ def _sparse_impulse_plot(result: SimulationResult) -> List[Dict[str, float]]:
         }
         for event in result.sorted_events()
     ]
+
+
+def _event_band_amplitude(event: Any, scene: Scene, result: SimulationResult, band_index: int) -> float:
+    reflection_gain = 1.0
+    for patch_id in event.patch_sequence:
+        reflection_gain *= scene.patch(patch_id).reflection_pressure(band_index)
+    direct_distance = math.dist(result.source, result.receiver)
+    path_length = max(float(event.path_length_m), 1.0e-12)
+    if result.config.normalize_to_direct:
+        spreading_gain = direct_distance / path_length
+        air_distance = max(0.0, path_length - direct_distance)
+    else:
+        spreading_gain = 1.0 / path_length
+        air_distance = path_length
+    return spreading_gain * reflection_gain * (10.0 ** (-(result.config.air_attenuation_db_per_m * air_distance) / 20.0))
+
+
+def _directional_analysis(result: SimulationResult, scene: Scene, bin_degrees: int = 10) -> Dict[str, Any]:
+    events = result.sorted_events()
+    band_sparse: Dict[str, List[Dict[str, float]]] = {}
+    for band_index, band_hz in enumerate(OCTAVE_BANDS_HZ):
+        band_sparse[str(band_index)] = [
+            {
+                "path_id": event.path_id,
+                "order": event.order,
+                "band_hz": band_hz,
+                "time_ms": event.arrival_time_relative_s * 1000.0,
+                "amplitude": _event_band_amplitude(event, scene, result, band_index),
+                "source_relative_azimuth_deg": event.source_relative_azimuth_deg,
+                "elevation_deg": event.elevation_deg,
+            }
+            for event in events
+        ]
+
+    max_power = max((event.amplitude * event.amplitude for event in events), default=0.0)
+    angle_plane = [
+        {
+            "path_id": event.path_id,
+            "order": event.order,
+            "azimuth_deg": event.source_relative_azimuth_deg,
+            "elevation_deg": event.elevation_deg,
+            "amplitude": event.amplitude,
+            "power": event.amplitude * event.amplitude,
+            "relative_marker_radius": 0.0 if max_power <= 0.0 else math.sqrt((event.amplitude * event.amplitude) / max_power),
+        }
+        for event in events
+    ]
+
+    bin_count = max(1, int(math.ceil(360.0 / float(bin_degrees))))
+    bins = [{"center_deg": -180.0 + (i + 0.5) * bin_degrees, "power": 0.0, "path_count": 0} for i in range(bin_count)]
+    for event in events:
+        azimuth = ((event.source_relative_azimuth_deg + 180.0) % 360.0) - 180.0
+        index = min(bin_count - 1, max(0, int(math.floor((azimuth + 180.0) / bin_degrees))))
+        bins[index]["power"] += event.amplitude * event.amplitude
+        bins[index]["path_count"] += 1
+    max_bin_power = max((row["power"] for row in bins), default=0.0)
+    for row in bins:
+        row["relative_power"] = 0.0 if max_bin_power <= 0.0 else row["power"] / max_bin_power
+        row["db_relative"] = None if row["power"] <= 0.0 or max_bin_power <= 0.0 else 10.0 * math.log10(row["power"] / max_bin_power)
+
+    return {
+        "azimuth_reference": "0 degrees is the direct source direction at the receiver, following Borish's polar plots.",
+        "band_sparse_ir": band_sparse,
+        "angle_plane": angle_plane,
+        "polar_power": {
+            "bin_degrees": bin_degrees,
+            "bins": bins,
+        },
+    }
 
 
 def check_mesh_json(payload_json: str) -> str:
@@ -634,6 +731,7 @@ def run_simulation_json(payload_json: str) -> str:
             "ir_mode": "broadband_mono",
             "band_aggregation": "energy_average_across_octave_absorption_coefficients",
             "sparse": _sparse_impulse_plot(result),
+            "band_sparse": result_dict["analysis"]["band_sparse_ir"],
         },
         "wav_base64": base64.b64encode(wav).decode("ascii"),
     }

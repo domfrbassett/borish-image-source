@@ -384,6 +384,7 @@ class ReflectionEvent:
     direction_of_arrival: Vec3
     azimuth_deg: float
     elevation_deg: float
+    source_relative_azimuth_deg: float
 
 
 @dataclass
@@ -395,6 +396,7 @@ class SimulationStats:
     rejected_visibility: int = 0
     rejected_obstruction: int = 0
     accepted_reflections: int = 0
+    order_pruned_nodes: int = 0
     hit_node_limit: bool = False
 
 
@@ -466,8 +468,12 @@ class EarlyReflectionSolver:
         ):
             direction = v_normalize(v_sub(self.source, self.receiver)) if self._direct_distance > 0.0 else (0.0, 0.0, 0.0)
             azimuth, elevation = _azimuth_elevation(direction)
-            direct_amplitude = 1.0 if self.config.normalize_to_direct else 1.0 / max(self._direct_distance, 1.0e-12)
-            direct_amplitude *= _air_pressure_gain(self._direct_distance, self.config.air_attenuation_db_per_m)
+            source_relative_azimuth = _relative_azimuth_deg(direction, direction)
+            if self.config.normalize_to_direct:
+                direct_amplitude = 1.0
+            else:
+                direct_amplitude = 1.0 / max(self._direct_distance, 1.0e-12)
+                direct_amplitude *= _air_pressure_gain(self._direct_distance, self.config.air_attenuation_db_per_m)
             self._events.append(
                 ReflectionEvent(
                     path_id=-1,
@@ -483,6 +489,7 @@ class EarlyReflectionSolver:
                     direction_of_arrival=direction,
                     azimuth_deg=azimuth,
                     elevation_deg=elevation,
+                    source_relative_azimuth_deg=source_relative_azimuth,
                 )
             )
 
@@ -507,6 +514,8 @@ class EarlyReflectionSolver:
 
     def _propagate(self, parent_image: Vec3, patch_sequence: List[int], image_positions: List[Vec3]) -> None:
         if len(patch_sequence) >= self.config.max_order:
+            if v_distance(parent_image, self.receiver) <= self._max_path_length + self.config.geometry_tolerance:
+                self.stats.order_pruned_nodes += 1
             return
 
         for patch in self.scene.patches:
@@ -619,10 +628,12 @@ class EarlyReflectionSolver:
 
         if self.config.normalize_to_direct:
             spreading_gain = self._direct_distance / max(path_length, 1.0e-12)
+            air_distance = max(0.0, path_length - self._direct_distance)
         else:
             spreading_gain = 1.0 / max(path_length, 1.0e-12)
+            air_distance = path_length
         amplitude = spreading_gain * reflection_gain * _air_pressure_gain(
-            path_length, self.config.air_attenuation_db_per_m
+            air_distance, self.config.air_attenuation_db_per_m
         )
 
         absolute_time = path_length / self.config.speed_of_sound
@@ -635,6 +646,8 @@ class EarlyReflectionSolver:
         previous_point = path_vertices[-2]
         direction = v_normalize(v_sub(previous_point, self.receiver))
         azimuth, elevation = _azimuth_elevation(direction)
+        direct_direction = v_normalize(v_sub(self.source, self.receiver)) if self._direct_distance > 0.0 else direction
+        source_relative_azimuth = _relative_azimuth_deg(direct_direction, direction)
 
         return ReflectionEvent(
             path_id=-1,
@@ -650,6 +663,7 @@ class EarlyReflectionSolver:
             direction_of_arrival=direction,
             azimuth_deg=azimuth,
             elevation_deg=elevation,
+            source_relative_azimuth_deg=source_relative_azimuth,
         )
 
 
@@ -777,6 +791,7 @@ def save_ancestry_json(path: str, result: SimulationResult, scene: Scene, *, ir_
             "direction_of_arrival": _vec_to_list(event.direction_of_arrival),
             "azimuth_deg": event.azimuth_deg,
             "elevation_deg": event.elevation_deg,
+            "source_relative_azimuth_deg": event.source_relative_azimuth_deg,
         })
 
     with open(path, "w", encoding="utf-8") as handle:
@@ -787,7 +802,7 @@ def save_ancestry_csv(path: str, result: SimulationResult, scene: Scene) -> None
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     fieldnames = [
         "path_id", "order", "arrival_time_relative_s", "arrival_time_absolute_s",
-        "path_length_m", "amplitude", "azimuth_deg", "elevation_deg",
+        "path_length_m", "amplitude", "azimuth_deg", "elevation_deg", "source_relative_azimuth_deg",
         "patch_sequence", "owner_sequence", "face_sequence", "reflection_points",
     ]
     with open(path, "w", encoding="utf-8", newline="") as handle:
@@ -809,6 +824,7 @@ def save_ancestry_csv(path: str, result: SimulationResult, scene: Scene) -> None
                 "amplitude": f"{event.amplitude:.12g}",
                 "azimuth_deg": f"{event.azimuth_deg:.9g}",
                 "elevation_deg": f"{event.elevation_deg:.9g}",
+                "source_relative_azimuth_deg": f"{event.source_relative_azimuth_deg:.9g}",
                 "patch_sequence": "|".join(str(x) for x in event.patch_sequence),
                 "owner_sequence": "|".join(owners),
                 "face_sequence": "|".join(faces),
@@ -1074,6 +1090,16 @@ def _azimuth_elevation(direction: Vec3) -> Tuple[float, float]:
     azimuth = math.degrees(math.atan2(direction[1], direction[0]))
     elevation = math.degrees(math.atan2(direction[2], horizontal))
     return azimuth, elevation
+
+
+def _relative_azimuth_deg(reference_direction: Vec3, direction: Vec3) -> float:
+    ref_x, ref_y = reference_direction[0], reference_direction[1]
+    dir_x, dir_y = direction[0], direction[1]
+    if math.hypot(ref_x, ref_y) <= 1.0e-15 or math.hypot(dir_x, dir_y) <= 1.0e-15:
+        return 0.0
+    cross_z = ref_x * dir_y - ref_y * dir_x
+    dot_xy = ref_x * dir_x + ref_y * dir_y
+    return math.degrees(math.atan2(cross_z, dot_xy))
 
 
 __all__ = [

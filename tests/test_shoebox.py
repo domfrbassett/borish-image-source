@@ -77,6 +77,31 @@ class ShoeboxTests(unittest.TestCase):
         for expected, actual in zip(expected_lengths, actual_lengths):
             self.assertAlmostEqual(expected, actual, places=8)
 
+    def test_directional_azimuth_is_relative_to_direct_sound(self):
+        scene = make_box_scene()
+        source = (2.0, 3.0, 1.2)
+        receiver = (6.0, 5.0, 1.2)
+        result = EarlyReflectionSolver(
+            scene, source, receiver,
+            SimulationConfig(max_order=1, max_time_s=0.2, band_index=4),
+        ).run()
+
+        direct = next(event for event in result.events if event.order == 0)
+        self.assertAlmostEqual(0.0, direct.source_relative_azimuth_deg, places=12)
+        for event in result.events:
+            self.assertLessEqual(abs(event.source_relative_azimuth_deg), 180.0)
+
+    def test_order_limit_reports_potential_completeness_loss(self):
+        scene = make_box_scene()
+        result = EarlyReflectionSolver(
+            scene,
+            (2.0, 3.0, 1.2),
+            (6.0, 5.0, 1.2),
+            SimulationConfig(max_order=1, max_time_s=0.2, band_index=4),
+        ).run()
+
+        self.assertGreater(result.stats.order_pruned_nodes, 0)
+
     def test_ir_has_direct_at_zero_relative_time(self):
         scene = make_box_scene()
         result = EarlyReflectionSolver(
@@ -85,6 +110,32 @@ class ShoeboxTests(unittest.TestCase):
         ).run()
         samples, _scale = build_impulse_response(result, reference="direct")
         self.assertGreater(samples[0], 0.0)
+
+    def test_air_attenuation_is_relative_when_normalized_to_direct(self):
+        scene = make_box_scene()
+        source = (2.0, 3.0, 1.2)
+        receiver = (6.0, 5.0, 1.2)
+        result = EarlyReflectionSolver(
+            scene,
+            source,
+            receiver,
+            SimulationConfig(
+                max_order=1,
+                max_time_s=0.2,
+                band_index=4,
+                air_attenuation_db_per_m=1.0,
+                normalize_to_direct=True,
+            ),
+        ).run()
+
+        direct = next(event for event in result.events if event.order == 0)
+        self.assertAlmostEqual(1.0, direct.amplitude, places=12)
+
+        reflection = next(event for event in result.events if event.order == 1)
+        expected_air_distance = reflection.path_length_m - math.dist(source, receiver)
+        no_air_amplitude = math.dist(source, receiver) / reflection.path_length_m
+        expected = no_air_amplitude * (10.0 ** (-expected_air_distance / 20.0))
+        self.assertAlmostEqual(expected, reflection.amplitude, places=12)
 
     def test_point_inside_diagnostic(self):
         scene = make_box_scene()
