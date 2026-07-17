@@ -35,7 +35,7 @@ const elements = {
 };
 
 const viewer = makeViewer(document.getElementById("viewport"));
-const worker = new Worker(new URL("./ismWorker.js?v=20260709010639", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./ismWorker.js?v=borish_directional_20260717", import.meta.url), { type: "module" });
 
 let mesh = null;
 let lastSimulation = null;
