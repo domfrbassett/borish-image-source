@@ -1204,16 +1204,6 @@ function renderFftPlot(sparse) {
   ctx.stroke();
 }
 
-function polarPlotWarnings(result) {
-  const diagnostics = result?.diagnostics || {};
-  const warnings = [];
-  if (diagnostics.direct_path_blocked) warnings.push("direct blocked");
-  const completeness = diagnostics.completeness || {};
-  if (completeness.order_limited) warnings.push("order-limited");
-  if (completeness.node_limited) warnings.push("node-limited");
-  return warnings;
-}
-
 function renderPolarPowerPlot(result) {
   const canvas = elements.irCanvas;
   if (!canvas) return;
@@ -1256,18 +1246,10 @@ function renderPolarPowerPlot(result) {
   ctx.fillStyle = "#9fb0c1";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText("0/source", cx, cy - radius - 12 * scale);
+  ctx.fillText("0", cx, cy - radius - 12 * scale);
   ctx.fillText("-90", cx - radius - 20 * scale, cy);
   ctx.fillText("+90", cx + radius + 22 * scale, cy);
   ctx.fillText("180", cx, cy + radius + 14 * scale);
-
-  const warnings = polarPlotWarnings(result);
-  if (warnings.length) {
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    ctx.fillStyle = "#ffd36e";
-    ctx.fillText(warnings.join("; "), 10 * scale, 10 * scale);
-  }
 
   if (!bins.length) return;
 
