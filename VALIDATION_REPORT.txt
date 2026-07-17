@@ -5,8 +5,8 @@ platform=Windows-11-10.0.26200-SP0
 sha256[borish_core.py]=e91bd9bfbb57ef92dd9dcfb64846b63bca3899139ce2d982d3f3e1edd24602a0
 sha256[borish_cli.py]=9a8dc10f4ed8b8b4070adce0aaeffd62031986b780b10a7de6f1eec1f098e402
 sha256[rhino_pachyderm_bridge.py]=2f60c18ec4ca63ecbdada3d3fed7afae207265845202f9e7ec60760f942be8a2
-syntax=PASS python_files=13
-unit_tests=PASS tests_run=9
+syntax=PASS python_files=14
+unit_tests=PASS tests_run=10
 inside_diagnostic=PASS source=True receiver=True outside=False
 order1=PASS paths=7 reflected_nodes=6 analytic_lengths=True ancestry=True
 order2=PASS paths=25 reflected_nodes=36 ancestry=True

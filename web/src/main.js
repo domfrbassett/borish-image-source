@@ -11,6 +11,7 @@ const elements = {
   downloadJson: document.getElementById("downloadJson"),
   downloadCsv: document.getElementById("downloadCsv"),
   downloadWav: document.getElementById("downloadWav"),
+  downloadDirectionalIr: document.getElementById("downloadDirectionalIr"),
   recordWebm: document.getElementById("recordWebm"),
   log: document.getElementById("log"),
   toaTable: document.getElementById("toaTable"),
@@ -35,7 +36,7 @@ const elements = {
 };
 
 const viewer = makeViewer(document.getElementById("viewport"));
-const worker = new Worker(new URL("./ismWorker.js?v=borish_directional_20260717", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./ismWorker.js?v=borish_directional_ir_20260717", import.meta.url), { type: "module" });
 
 let mesh = null;
 let lastSimulation = null;
@@ -762,7 +763,7 @@ Assign material coefficients to every surface before Run ISM.`);
 }
 
 function setDownloadsEnabled(enabled) {
-  for (const id of ["downloadJson", "downloadCsv", "downloadWav", "recordWebm"]) {
+  for (const id of ["downloadJson", "downloadCsv", "downloadWav", "downloadDirectionalIr", "recordWebm"]) {
     elements[id].disabled = !enabled;
   }
 }
@@ -1211,8 +1212,8 @@ function renderPolarPowerPlot(analysis) {
   const rect = canvas.getBoundingClientRect();
   const scale = window.devicePixelRatio || 1;
 
-  canvas.width = Math.max(600, Math.floor(rect.width * scale));
-  canvas.height = Math.max(180, Math.floor(rect.height * scale));
+  canvas.width = Math.max(1, Math.floor(rect.width * scale));
+  canvas.height = Math.max(1, Math.floor(rect.height * scale));
 
   const ctx = canvas.getContext("2d");
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -1221,7 +1222,8 @@ function renderPolarPowerPlot(analysis) {
 
   const cx = canvas.width / 2;
   const cy = canvas.height / 2;
-  const radius = Math.max(20 * scale, Math.min(canvas.width, canvas.height) * 0.38);
+  const labelGutter = 34 * scale;
+  const radius = Math.max(20 * scale, (Math.min(canvas.width, canvas.height) - 2 * labelGutter) * 0.5);
 
   ctx.strokeStyle = "#293544";
   ctx.lineWidth = 1 * scale;
@@ -1613,6 +1615,10 @@ elements.downloadCsv.addEventListener("click", () => {
 
 elements.downloadWav.addEventListener("click", () => {
   if (lastSimulation) downloadBase64(`${lastFilenameBase}_impulse_response.wav`, lastSimulation.wav_base64, "audio/wav");
+});
+
+elements.downloadDirectionalIr.addEventListener("click", () => {
+  if (lastSimulation) downloadJson(`${lastFilenameBase}_directional_ir.json`, lastSimulation.directional_ir);
 });
 
 elements.recordWebm.addEventListener("click", async () => {

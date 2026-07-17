@@ -494,6 +494,62 @@ def _wav_bytes(samples: Sequence[float], sample_rate: int) -> bytes:
     return buffer.getvalue()
 
 
+def _directional_ir_payload(
+    result: SimulationResult,
+    scene: Scene,
+    *,
+    reference: str = "direct",
+) -> Dict[str, Any]:
+    events = result.sorted_events()
+
+    def event_time(event: Any) -> float:
+        return event.arrival_time_relative_s if reference == "direct" else event.arrival_time_absolute_s
+
+    sparse_events: List[Dict[str, Any]] = []
+    for event in events:
+        time_s = max(0.0, event_time(event))
+        sample_position = time_s * result.config.sample_rate
+        sparse_events.append({
+            "path_id": event.path_id,
+            "order": event.order,
+            "time_s": time_s,
+            "sample_position": sample_position,
+            "nearest_sample_index": int(round(sample_position)),
+            "amplitude": event.amplitude,
+            "direction_of_arrival": _vec_list(event.direction_of_arrival),
+            "azimuth_deg": event.azimuth_deg,
+            "elevation_deg": event.elevation_deg,
+            "source_relative_azimuth_deg": event.source_relative_azimuth_deg,
+            "patch_sequence": list(event.patch_sequence),
+            "band_amplitudes": [
+                _event_band_amplitude(event, scene, result, band_index)
+                for band_index in range(len(OCTAVE_BANDS_HZ))
+            ],
+        })
+
+    duration_s = max((event["time_s"] for event in sparse_events), default=0.0)
+    return {
+        "format": "borish-directional-sparse-ir-v1",
+        "mode": "directional_sparse_ir",
+        "sample_rate": result.config.sample_rate,
+        "time_reference": reference,
+        "duration_s": duration_s,
+        "sample_count": int(math.ceil(duration_s * result.config.sample_rate)) + 1,
+        "octave_bands_hz": list(OCTAVE_BANDS_HZ),
+        "coordinate_convention": {
+            "direction_of_arrival": "unit vector pointing from receiver toward the arriving image-source ray",
+            "azimuth_deg": "world XY azimuth in degrees",
+            "source_relative_azimuth_deg": "azimuth relative to the direct source-to-receiver bearing",
+            "elevation_deg": "vertical angle in degrees",
+        },
+        "rendering_contract": (
+            "This is a neutral sparse directional kernel. Directional rendering or auralisation should convolve "
+            "these events through an explicitly chosen receiver/source directivity, loudspeaker, Ambisonic, or HRTF model."
+        ),
+        "events": sparse_events,
+    }
+
+
 def _toa_table(result: SimulationResult, scene: Scene) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     for event in result.sorted_events():
@@ -705,6 +761,7 @@ def run_simulation_json(payload_json: str) -> str:
 
     samples, ir_scale = build_impulse_response(result, reference="direct")
     wav = _wav_bytes(samples, result.config.sample_rate)
+    directional_ir = _directional_ir_payload(result, scene, reference="direct")
     result_dict = _result_to_dict(result, scene, ir_scale)
     result_dict["closure"] = closure
     result_dict["diagnostics"]["two_sided_reflectors"] = bool(result.config.two_sided_reflectors)
@@ -733,6 +790,12 @@ def run_simulation_json(payload_json: str) -> str:
             "sparse": _sparse_impulse_plot(result),
             "band_sparse": result_dict["analysis"]["band_sparse_ir"],
         },
+        "auralization": {
+            "status": "not_implemented",
+            "reason": "Directional convolution/rendering requires an explicitly selected receiver, loudspeaker, Ambisonic, or HRTF model.",
+            "available_input": "directional_ir",
+        },
         "wav_base64": base64.b64encode(wav).decode("ascii"),
+        "directional_ir": directional_ir,
     }
     return json.dumps(response)
