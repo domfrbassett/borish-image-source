@@ -63,15 +63,27 @@ function appendLog(message) {
 }
 
 function formatSeconds(value) {
+  if (value === null || value === undefined) return "n/a";
   const number = Number(value);
   if (!Number.isFinite(number)) return "n/a";
   return number.toFixed(number < 10 ? 2 : 1);
+}
+
+function formatDecayFitSeconds(decay, band, key) {
+  if (!decay?.complete_within_time_radius) return "n/a";
+  const fit = band?.fits?.[key];
+  if (!fit?.valid) return "n/a";
+  return formatSeconds(band?.[`${key}_s`]);
 }
 
 function formatHz(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "n/a";
   return number >= 1000 ? `${number / 1000}k` : String(number);
+}
+
+function formatStatus(value) {
+  return String(value || "unknown").replace(/_/g, " ");
 }
 
 function renderRoomMetrics(result) {
@@ -86,19 +98,22 @@ function renderRoomMetrics(result) {
   const rtRows = (decay.bands || []).map((band) => `
     <tr>
       <th>${formatHz(band.band_hz)}</th>
-      <td>${formatSeconds(band.edt_s)}</td>
-      <td>${formatSeconds(band.t20_s)}</td>
-      <td>${formatSeconds(band.t30_s)}</td>
+      <td>${formatDecayFitSeconds(decay, band, "edt")}</td>
+      <td>${formatDecayFitSeconds(decay, band, "t20")}</td>
+      <td>${formatDecayFitSeconds(decay, band, "t30")}</td>
       <td>${Number(band.energy_dynamic_range_db || 0).toFixed(1)}</td>
       <td>${band.valid ? "valid" : (band.reason || "n/a")}</td>
     </tr>
   `).join("");
   const validity = decay.valid ? "valid" : "not valid";
-  const autoStatus = result?.auto_solver?.enabled ? result.auto_solver.status : "manual";
+  const auto = result?.auto_solver;
+  const autoStatus = auto?.enabled ? formatStatus(auto.status) : "manual";
   elements.roomMetrics.innerHTML = `
     <div class="metric-strip">
       <span>Borish ISM ${String(decay.target_metric || "t30").toUpperCase()}: ${validity}</span>
       <span>solver ${autoStatus}</span>
+      <span>order ${auto?.selected_max_order ?? result?.config?.max_order ?? "n/a"}</span>
+      <span>time ${Number((auto?.selected_max_time_s ?? result?.config?.max_time_s ?? 0) * 1000).toFixed(0)} ms</span>
       <span>coverage ${decay.valid_band_count || 0}/${decay.band_count || 0}</span>
       <span>required ${Number(decay.required_decay_db || 0).toFixed(0)} dB</span>
       <span>V ${Number(geometry?.volume_m3 || 0).toFixed(1)} m3</span>
