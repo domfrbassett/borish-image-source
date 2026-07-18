@@ -999,6 +999,160 @@ def check_mesh_json(payload_json: str) -> str:
     return json.dumps(report)
 
 
+def _is_truthy_option(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on", "auto"}
+    return default
+
+
+def _run_borish_once(
+    scene: Scene,
+    source: Vec3,
+    receiver: Vec3,
+    options: Dict[str, Any],
+    *,
+    max_order: int,
+    max_time_s: float,
+    max_nodes: int,
+    decay_target: str,
+    closure: Dict[str, Any],
+) -> Tuple[SimulationResult, List[float], float, Dict[str, Any]]:
+    config = SimulationConfig(
+        max_order=max_order,
+        max_time_s=max_time_s,
+        speed_of_sound=float(options.get("speed_of_sound", 343.0)),
+        sample_rate=int(options.get("sample_rate", 48000)),
+        band_index=None,
+        time_reference="direct",
+        max_nodes=max_nodes,
+        air_attenuation_db_per_m=float(options.get("air_attenuation_db_per_m", 0.0)),
+        two_sided_reflectors=False,
+    )
+    solver = EarlyReflectionSolver(scene, source, receiver, config)
+    result = solver.run(diagnose_inside=True)
+    samples, ir_scale = build_impulse_response(result, reference="direct")
+    result_dict = _result_to_dict(result, scene, ir_scale, decay_target=decay_target)
+    result_dict["closure"] = closure
+    result_dict["diagnostics"]["two_sided_reflectors"] = bool(result.config.two_sided_reflectors)
+    result_dict["diagnostics"]["open_mesh_diagnostic_run"] = bool(closure.get("diagnostic_open_mesh_run", False))
+    result_dict["room_acoustics"] = _room_acoustics_estimate(result, scene, closure)
+    if closure.get("diagnostic_open_mesh_run"):
+        result_dict["diagnostics"]["validity"] = "diagnostic_open_mesh"
+        result_dict["diagnostics"]["warning"] = (
+            "This result was generated from a non-closed mesh. It is useful for geometry debugging, "
+            "but it is not a complete or physically validated acoustic enclosure result."
+        )
+    else:
+        result_dict["diagnostics"]["validity"] = "closed_mesh"
+    return result, samples, ir_scale, result_dict
+
+
+def _auto_solve_borish_decay(
+    scene: Scene,
+    source: Vec3,
+    receiver: Vec3,
+    options: Dict[str, Any],
+    closure: Dict[str, Any],
+    *,
+    decay_target: str,
+) -> Tuple[SimulationResult, List[float], float, Dict[str, Any], Dict[str, Any]]:
+    order_cap = max(0, int(options.get("max_order", 8)))
+    max_nodes = max(1, int(options.get("max_nodes", 250000)))
+    initial_time_s = max(0.001, float(options.get("max_time_s", 0.120)))
+    time_cap_s = max(initial_time_s, float(options.get("auto_max_time_s", 2.0)))
+    max_iterations = max(1, int(options.get("auto_max_iterations", 12)))
+
+    order = min(order_cap, max(0, int(options.get("initial_order", min(2, order_cap)))))
+    time_s = initial_time_s
+    iterations: List[Dict[str, Any]] = []
+    final_status = "iteration_limit"
+    last: Optional[Tuple[SimulationResult, List[float], float, Dict[str, Any]]] = None
+    best_complete_traversal: Optional[Tuple[SimulationResult, List[float], float, Dict[str, Any]]] = None
+
+    for iteration_index in range(max_iterations):
+        result, samples, ir_scale, result_dict = _run_borish_once(
+            scene,
+            source,
+            receiver,
+            options,
+            max_order=order,
+            max_time_s=time_s,
+            max_nodes=max_nodes,
+            decay_target=decay_target,
+            closure=closure,
+        )
+        last = (result, samples, ir_scale, result_dict)
+        if not result.stats.hit_node_limit:
+            best_complete_traversal = last
+        decay = result_dict["ism_decay"]
+        completeness = result_dict["diagnostics"]["completeness"]
+        min_decay = min((band.get("energy_dynamic_range_db", 0.0) for band in decay["bands"]), default=0.0)
+        iterations.append({
+            "iteration": iteration_index + 1,
+            "max_order": order,
+            "max_time_s": time_s,
+            "paths": len(result.events),
+            "nodes_reflected": result.stats.nodes_reflected,
+            "node_limit_hit": result.stats.hit_node_limit,
+            "order_pruned_nodes": result.stats.order_pruned_nodes,
+            "complete_within_time_radius": completeness["complete_within_time_radius"],
+            "decay_valid": decay["valid"],
+            "valid_band_count": decay["valid_band_count"],
+            "band_count": decay["band_count"],
+            "min_energy_dynamic_range_db": min_decay,
+        })
+
+        if decay["valid"]:
+            final_status = "target_satisfied"
+            break
+        if result.stats.hit_node_limit:
+            final_status = "node_budget_exceeded"
+            if best_complete_traversal is not None:
+                last = best_complete_traversal
+            break
+        if not completeness["complete_within_time_radius"]:
+            if order < order_cap:
+                order += 1
+                continue
+            final_status = "order_cap_exceeded"
+            break
+        if time_s < time_cap_s:
+            next_time_s = min(time_cap_s, max(time_s + 0.050, time_s * 1.5))
+            if next_time_s <= time_s + 1.0e-12:
+                final_status = "time_cap_exceeded"
+                break
+            time_s = next_time_s
+            if order < order_cap:
+                order += 1
+            continue
+        final_status = "decay_depth_not_reached"
+        break
+
+    if last is None:
+        raise RuntimeError("Auto solver did not run")
+
+    selected_result = last[0]
+    auto_report = {
+        "enabled": True,
+        "status": final_status,
+        "target_metric": decay_target,
+        "order_cap": order_cap,
+        "node_cap": max_nodes,
+        "initial_time_s": initial_time_s,
+        "time_cap_s": time_cap_s,
+        "selected_max_order": selected_result.config.max_order,
+        "selected_max_time_s": selected_result.config.max_time_s,
+        "iterations": iterations,
+    }
+    return (*last, auto_report)
+
+
 def run_simulation_json(payload_json: str) -> str:
     payload = json.loads(payload_json)
     mesh = payload["mesh"]
@@ -1024,49 +1178,51 @@ def run_simulation_json(payload_json: str) -> str:
 
     source = _vec3(payload["source"])
     receiver = _vec3(payload["receiver"])
-    # Full broadband mono IR: use all octave-band coefficients and aggregate them into one mono event train.
-    band_index = None
-    two_sided_reflectors = False
-    config = SimulationConfig(
-        max_order=int(options.get("max_order", 3)),
-        max_time_s=float(options.get("max_time_s", 0.120)),
-        speed_of_sound=float(options.get("speed_of_sound", 343.0)),
-        sample_rate=int(options.get("sample_rate", 48000)),
-        band_index=band_index,
-        time_reference="direct",
-        max_nodes=int(options.get("max_nodes", 250000)),
-        air_attenuation_db_per_m=float(options.get("air_attenuation_db_per_m", 0.0)),
-        two_sided_reflectors=False,
-    )
+    decay_target = str(options.get("decay_target", "t30"))
+    auto_solve_decay = _is_truthy_option(options.get("auto_solve_decay"), default=False)
 
-    solver = EarlyReflectionSolver(scene, source, receiver, config)
-    result = solver.run(diagnose_inside=True)
+    if auto_solve_decay:
+        result, samples, ir_scale, result_dict, auto_report = _auto_solve_borish_decay(
+            scene,
+            source,
+            receiver,
+            options,
+            closure,
+            decay_target=decay_target,
+        )
+    else:
+        max_order = int(options.get("max_order", 3))
+        max_time_s = float(options.get("max_time_s", 0.120))
+        max_nodes = int(options.get("max_nodes", 250000))
+        result, samples, ir_scale, result_dict = _run_borish_once(
+            scene,
+            source,
+            receiver,
+            options,
+            max_order=max_order,
+            max_time_s=max_time_s,
+            max_nodes=max_nodes,
+            decay_target=decay_target,
+            closure=closure,
+        )
+        auto_report = {
+            "enabled": False,
+            "status": "manual",
+            "target_metric": decay_target,
+            "order_cap": max_order,
+            "node_cap": max_nodes,
+            "initial_time_s": max_time_s,
+            "time_cap_s": max_time_s,
+            "iterations": [],
+        }
 
     if result.source_inside_scene is not True or result.receiver_inside_scene is not True:
         # Return the diagnostic result but mark it as unsafe.  The browser UI also blocks this.
         pass
 
-    samples, ir_scale = build_impulse_response(result, reference="direct")
     wav = _wav_bytes(samples, result.config.sample_rate)
     directional_ir = _directional_ir_payload(result, scene, reference="direct")
-    result_dict = _result_to_dict(
-        result,
-        scene,
-        ir_scale,
-        decay_target=str(options.get("decay_target", "t30")),
-    )
-    result_dict["closure"] = closure
-    result_dict["diagnostics"]["two_sided_reflectors"] = bool(result.config.two_sided_reflectors)
-    result_dict["diagnostics"]["open_mesh_diagnostic_run"] = bool(closure.get("diagnostic_open_mesh_run", False))
-    result_dict["room_acoustics"] = _room_acoustics_estimate(result, scene, closure)
-    if closure.get("diagnostic_open_mesh_run"):
-        result_dict["diagnostics"]["validity"] = "diagnostic_open_mesh"
-        result_dict["diagnostics"]["warning"] = (
-            "This result was generated from a non-closed mesh. It is useful for geometry debugging, "
-            "but it is not a complete or physically validated acoustic enclosure result."
-        )
-    else:
-        result_dict["diagnostics"]["validity"] = "closed_mesh"
+    result_dict["auto_solver"] = auto_report
     toa = _toa_table(result, scene)
 
     response = {

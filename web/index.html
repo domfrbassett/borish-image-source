@@ -80,7 +80,6 @@
 
       <h2>4. Simulation</h2>
       <div class="settings">
-        <label>Max order <input id="maxOrder" type="number" min="0" max="8" value="2"></label>
         <label>Max time after direct, ms <input id="maxTimeMs" type="number" min="1" value="120"></label>
         <label>Decay target
           <select id="decayTarget">
@@ -114,7 +113,10 @@
 
         <details class="advanced-settings wide">
           <summary>Advanced limits</summary>
+          <label>Auto satisfy decay target <input id="autoSolveDecay" type="checkbox" checked></label>
+          <label>Order cap <input id="maxOrder" type="number" min="0" max="12" value="8"></label>
           <label>Node safety limit <input id="maxNodes" type="number" min="1" value="250000"></label>
+          <label>Time cap, ms <input id="autoMaxTimeMs" type="number" min="1" value="2000"></label>
         </details>
         <p class="hint wide">All surfaces must have assigned material absorption before simulation.</p>
       </div>

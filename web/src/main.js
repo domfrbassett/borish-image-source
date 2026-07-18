@@ -13,6 +13,7 @@ const elements = {
   downloadWav: document.getElementById("downloadWav"),
   downloadDirectionalIr: document.getElementById("downloadDirectionalIr"),
   recordWebm: document.getElementById("recordWebm"),
+  autoSolveDecay: document.getElementById("autoSolveDecay"),
   decayTarget: document.getElementById("decayTarget"),
   log: document.getElementById("log"),
   roomMetrics: document.getElementById("roomMetrics"),
@@ -93,9 +94,11 @@ function renderRoomMetrics(result) {
     </tr>
   `).join("");
   const validity = decay.valid ? "valid" : "not valid";
+  const autoStatus = result?.auto_solver?.enabled ? result.auto_solver.status : "manual";
   elements.roomMetrics.innerHTML = `
     <div class="metric-strip">
       <span>Borish ISM ${String(decay.target_metric || "t30").toUpperCase()}: ${validity}</span>
+      <span>solver ${autoStatus}</span>
       <span>coverage ${decay.valid_band_count || 0}/${decay.band_count || 0}</span>
       <span>required ${Number(decay.required_decay_db || 0).toFixed(0)} dB</span>
       <span>V ${Number(geometry?.volume_m3 || 0).toFixed(1)} m3</span>
@@ -133,8 +136,10 @@ function readPayload() {
       sample_rate: readNumber("sampleRate"),
       band_hz: "broadband",
       ir_mode: "broadband_mono",
+      auto_solve_decay: elements.autoSolveDecay?.checked ?? true,
       decay_target: elements.decayTarget?.value || "t30",
       max_nodes: readNumber("maxNodes"),
+      auto_max_time_s: readNumber("autoMaxTimeMs") / 1000.0,
       auto_flip_normals: true,
       surface_material_count: mesh.faces.filter(surfaceHasAssignedMaterial).length,
       air_attenuation: readAirOptions(),
@@ -150,7 +155,7 @@ function setDefaultShoeboxPoints() {
   document.getElementById("receiverX").value = 6;
   document.getElementById("receiverY").value = 5;
   document.getElementById("receiverZ").value = 1.2;
-  document.getElementById("maxOrder").value = 2;
+  document.getElementById("maxOrder").value = 8;
 }
 
 function setDefaultConcavePoints() {
@@ -160,7 +165,7 @@ function setDefaultConcavePoints() {
   document.getElementById("receiverX").value = 2;
   document.getElementById("receiverY").value = 8;
   document.getElementById("receiverZ").value = 1.2;
-  document.getElementById("maxOrder").value = 4;
+  document.getElementById("maxOrder").value = 8;
 }
 
 function updateMarkers() {
@@ -1536,6 +1541,10 @@ worker.onmessage = (event) => {
       `rejected_obstruction=${result.stats.rejected_obstruction}`,
       `node_limit_hit=${result.stats.hit_node_limit}`,
       `complete_within_time_radius=${result.diagnostics.completeness?.complete_within_time_radius}`,
+      `auto_solver=${result.auto_solver?.status}`,
+      `auto_iterations=${result.auto_solver?.iterations?.length || 0}`,
+      `auto_selected_order=${result.auto_solver?.selected_max_order ?? result.config.max_order}`,
+      `auto_selected_time_ms=${Number((result.auto_solver?.selected_max_time_s ?? result.config.max_time_s) * 1000).toFixed(1)}`,
       `ism_decay_valid=${result.ism_decay?.valid}`,
       `ism_decay_complete=${result.ism_decay?.complete_within_time_radius}`,
       ...(result.diagnostics.completeness?.warnings || []).map((warning) => `WARNING: ${warning}`),

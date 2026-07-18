@@ -87,6 +87,29 @@ class PyodideApiTests(unittest.TestCase):
         expected_eyring = 0.161 * 30.0 / (-59.0 * math.log(1.0 - 0.05))
         self.assertAlmostEqual(expected_eyring, first_band["eyring_rt60_s"])
 
+    def test_auto_decay_solver_reports_budget_status(self):
+        payload = self._shoebox_payload()
+        payload["options"]["auto_solve_decay"] = True
+        payload["options"]["decay_target"] = "t30"
+        payload["options"]["max_order"] = 1
+        payload["options"]["auto_max_time_s"] = 0.08
+
+        result = json.loads(run_simulation_json(json.dumps(payload)))
+        auto_solver = result["result"]["auto_solver"]
+
+        self.assertTrue(auto_solver["enabled"])
+        self.assertIn("selected_max_order", auto_solver)
+        self.assertIn("selected_max_time_s", auto_solver)
+        self.assertGreaterEqual(len(auto_solver["iterations"]), 1)
+        self.assertIn(auto_solver["status"], {
+            "target_satisfied",
+            "node_budget_exceeded",
+            "order_cap_exceeded",
+            "time_cap_exceeded",
+            "decay_depth_not_reached",
+            "iteration_limit",
+        })
+
 
 if __name__ == "__main__":
     unittest.main()
