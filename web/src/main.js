@@ -39,7 +39,7 @@ const elements = {
 };
 
 const viewer = makeViewer(document.getElementById("viewport"));
-const worker = new Worker(new URL("./ismWorker.js?v=band_scattering_lroom_20260718", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./ismWorker.js?v=decay_horizon_guard_20260718", import.meta.url), { type: "module" });
 
 let mesh = null;
 let lastSimulation = null;

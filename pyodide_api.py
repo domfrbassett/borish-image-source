@@ -637,6 +637,21 @@ _DECAY_TARGETS = {
 _DECAY_POST_FIT_MARGIN_DB = 10.0
 
 
+def _fit_time_at_db(fit: Dict[str, Any], db: float) -> Optional[float]:
+    slope = fit.get("slope_db_per_s")
+    intercept = fit.get("intercept_db")
+    if slope is None or intercept is None:
+        return None
+    slope = float(slope)
+    intercept = float(intercept)
+    if not math.isfinite(slope) or not math.isfinite(intercept) or slope >= 0.0:
+        return None
+    time_s = (float(db) - intercept) / slope
+    if not math.isfinite(time_s):
+        return None
+    return max(0.0, time_s)
+
+
 def _ism_decay_estimate(
     result: SimulationResult,
     scene: Scene,
@@ -700,9 +715,15 @@ def _ism_decay_estimate(
         t30 = _schroeder_decay_fit(times, decay_db, -5.0, -35.0)
         fits = {"edt": edt, "t20": t20, "t30": t30}
         target_fit = fits[target_key]
+        validation_floor_db = float(target_spec["lower_db"]) - _DECAY_POST_FIT_MARGIN_DB
+        fit_validation_horizon_s = _fit_time_at_db(target_fit, validation_floor_db)
+        time_horizon_met = (
+            fit_validation_horizon_s is None
+            or duration_s + (1.0 / max(1, sample_rate)) >= fit_validation_horizon_s
+        )
         fit_range_met = -min_decay_db >= float(target_spec["required_decay_db"])
         post_fit_margin_met = -min_decay_db >= validation_required_db
-        band_valid = complete and bool(target_fit["valid"]) and fit_range_met and post_fit_margin_met
+        band_valid = complete and bool(target_fit["valid"]) and fit_range_met and post_fit_margin_met and time_horizon_met
         reasons = []
         if not complete:
             reasons.append("incomplete_borish_time_radius")
@@ -710,6 +731,8 @@ def _ism_decay_estimate(
             reasons.append("insufficient_decay_depth")
         elif not post_fit_margin_met:
             reasons.append("insufficient_post_fit_decay_margin")
+        if not time_horizon_met:
+            reasons.append("insufficient_time_horizon_for_fitted_decay")
         if not target_fit["valid"]:
             reasons.append("insufficient_decay_range")
 
@@ -722,6 +745,10 @@ def _ism_decay_estimate(
             "validation_required_decay_db": validation_required_db,
             "post_fit_margin_db": _DECAY_POST_FIT_MARGIN_DB,
             "post_fit_margin_met": post_fit_margin_met,
+            "fit_validation_floor_db": validation_floor_db,
+            "fit_validation_horizon_s": fit_validation_horizon_s,
+            "time_horizon_s": duration_s,
+            "time_horizon_met": time_horizon_met,
             "target_metric": target_key,
             "target_rt60_s": target_fit["rt60_s"] if band_valid else None,
             "diagnostic_target_rt60_s": target_fit["rt60_s"],

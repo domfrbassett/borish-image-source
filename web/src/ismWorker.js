@@ -10,7 +10,7 @@ async function initializePyodide() {
   await pyodide.loadPackage("micropip");
   const micropip = pyodide.pyimport("micropip");
   const wheelUrlObject = new URL("../vendor/borish_image_source-1.1.0-py3-none-any.whl", import.meta.url);
-  wheelUrlObject.search = "v=band_scattering_lroom_20260718";
+  wheelUrlObject.search = "v=decay_horizon_guard_20260718";
   const wheelUrl = wheelUrlObject.href;
   await micropip.install(wheelUrl);
   await pyodide.runPythonAsync("from pyodide_api import run_simulation_json, check_mesh_json");
