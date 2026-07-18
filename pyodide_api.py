@@ -26,6 +26,7 @@ from borish_core import (
     SimulationConfig,
     SimulationResult,
     Triangle,
+    UniqueImageSourceSolver,
     build_impulse_response,
     v_cross,
     v_dot,
@@ -1074,6 +1075,7 @@ def _run_borish_once(
     max_nodes: int,
     decay_target: str,
     closure: Dict[str, Any],
+    radius_solver: bool = False,
 ) -> Tuple[SimulationResult, List[float], float, Dict[str, Any]]:
     config = SimulationConfig(
         max_order=max_order,
@@ -1086,7 +1088,8 @@ def _run_borish_once(
         air_attenuation_db_per_m=float(options.get("air_attenuation_db_per_m", 0.0)),
         two_sided_reflectors=False,
     )
-    solver = EarlyReflectionSolver(scene, source, receiver, config)
+    solver_class = UniqueImageSourceSolver if radius_solver and not bool(closure.get("diagnostic_open_mesh_run", False)) else EarlyReflectionSolver
+    solver = solver_class(scene, source, receiver, config)
     result = solver.run(diagnose_inside=True)
     samples, ir_scale = build_impulse_response(result, reference="direct")
     result_dict = _result_to_dict(result, scene, ir_scale, decay_target=decay_target)
@@ -1115,13 +1118,13 @@ def _auto_solve_borish_decay(
     decay_target: str,
 ) -> Tuple[SimulationResult, List[float], float, Dict[str, Any], Dict[str, Any]]:
     manual_order_ceiling = max(0, int(options.get("max_order", 8)))
-    search_order_ceiling = max(manual_order_ceiling, int(options.get("auto_order_ceiling", 24)))
-    max_nodes = max(1, int(options.get("max_nodes", 250000)))
+    search_order_ceiling = max(manual_order_ceiling, int(options.get("auto_order_ceiling", 96)))
+    max_nodes = max(1, int(options.get("max_nodes", 5_000_000)))
     initial_time_s = max(0.001, float(options.get("max_time_s", 0.120)))
     time_cap_s = max(initial_time_s, float(options.get("auto_max_time_s", 2.0)))
     max_iterations = max(1, int(options.get("auto_max_iterations", 24)))
 
-    order = min(search_order_ceiling, max(0, int(options.get("initial_order", min(2, search_order_ceiling)))))
+    order = search_order_ceiling
     time_s = initial_time_s
     iterations: List[Dict[str, Any]] = []
     final_status = "iteration_limit"
@@ -1139,6 +1142,7 @@ def _auto_solve_borish_decay(
             max_nodes=max_nodes,
             decay_target=decay_target,
             closure=closure,
+            radius_solver=True,
         )
         last = (result, samples, ir_scale, result_dict)
         if not result.stats.hit_node_limit:
@@ -1149,6 +1153,9 @@ def _auto_solve_borish_decay(
         iterations.append({
             "iteration": iteration_index + 1,
             "max_order": order,
+            "radius_completion_order": result.stats.radius_completion_order,
+            "unique_image_sources": result.stats.unique_image_sources,
+            "unique_frontier_states": result.stats.unique_frontier_states,
             "max_time_s": time_s,
             "paths": len(result.events),
             "nodes_reflected": result.stats.nodes_reflected,
@@ -1181,8 +1188,6 @@ def _auto_solve_borish_decay(
                 final_status = "time_cap_exceeded"
                 break
             time_s = next_time_s
-            if order < search_order_ceiling:
-                order += 1
             continue
         final_status = "decay_depth_not_reached"
         break
@@ -1202,6 +1207,7 @@ def _auto_solve_borish_decay(
         "initial_time_s": initial_time_s,
         "time_cap_s": time_cap_s,
         "selected_max_order": selected_result.config.max_order,
+        "selected_radius_completion_order": selected_result.stats.radius_completion_order,
         "selected_max_time_s": selected_result.config.max_time_s,
         "iterations": iterations,
     }

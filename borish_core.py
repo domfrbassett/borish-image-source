@@ -399,6 +399,10 @@ class SimulationStats:
     accepted_reflections: int = 0
     order_pruned_nodes: int = 0
     hit_node_limit: bool = False
+    unique_image_sources: int = 0
+    unique_frontier_states: int = 0
+    radius_completion_order: int = 0
+    radius_solver: bool = False
 
 
 @dataclass
@@ -666,6 +670,207 @@ class EarlyReflectionSolver:
             elevation_deg=elevation,
             source_relative_azimuth_deg=source_relative_azimuth,
         )
+
+
+class UniqueImageSourceSolver(EarlyReflectionSolver):
+    """Radius-driven unique-image traversal with deterministic path recovery.
+
+    The plain Borish tree may contain very many histories that arrive at the
+    same virtual-source position.  For closed, consistently wound rooms, the
+    future image positions of such states depend only on the image position and
+    last reflecting patch.  This solver exhausts that unique frontier, then
+    reconstructs the physical path by ray-unfolding from the receiver toward
+    each final image.
+    """
+
+    def run(
+        self,
+        *,
+        progress_callback: Optional[ProgressCallback] = None,
+        cancel_callback: Optional[CancelCallback] = None,
+        diagnose_inside: bool = False,
+    ) -> SimulationResult:
+        self._progress_callback = progress_callback
+        self._cancel_callback = cancel_callback
+        self.stats = SimulationStats(radius_solver=True)
+        self._events = []
+
+        source_inside = self.scene.point_inside(self.source, tolerance=self.config.geometry_tolerance) if diagnose_inside else None
+        receiver_inside = self.scene.point_inside(self.receiver, tolerance=self.config.geometry_tolerance) if diagnose_inside else None
+
+        if (
+            self.config.include_direct
+            and self._direct_distance <= self._max_path_length + self.config.geometry_tolerance
+            and not self.scene.segment_blocked(
+                self.source, self.receiver, endpoint_epsilon=self.config.endpoint_epsilon
+            )
+        ):
+            direction = v_normalize(v_sub(self.source, self.receiver)) if self._direct_distance > 0.0 else (0.0, 0.0, 0.0)
+            azimuth, elevation = _azimuth_elevation(direction)
+            source_relative_azimuth = _relative_azimuth_deg(direction, direction)
+            direct_amplitude = 1.0 if self.config.normalize_to_direct else 1.0 / max(self._direct_distance, 1.0e-12)
+            if not self.config.normalize_to_direct:
+                direct_amplitude *= _air_pressure_gain(self._direct_distance, self.config.air_attenuation_db_per_m)
+            self._events.append(
+                ReflectionEvent(
+                    path_id=-1,
+                    order=0,
+                    patch_sequence=(),
+                    image_source_positions=(self.source,),
+                    reflection_points=(),
+                    path_vertices=(self.source, self.receiver),
+                    path_length_m=self._direct_distance,
+                    arrival_time_absolute_s=self._direct_distance / self.config.speed_of_sound,
+                    arrival_time_relative_s=0.0,
+                    amplitude=direct_amplitude,
+                    direction_of_arrival=direction,
+                    azimuth_deg=azimuth,
+                    elevation_deg=elevation,
+                    source_relative_azimuth_deg=source_relative_azimuth,
+                )
+            )
+
+        image_positions, final_image_keys = self._generate_unique_images()
+        self.stats.unique_image_sources = max(0, len(image_positions) - 1)
+
+        seen_paths = set()
+        for image_key in final_image_keys:
+            if self._cancel_callback is not None and self.stats.visible_candidates % 512 == 0:
+                if self._cancel_callback():
+                    raise SimulationCancelled("Simulation cancelled by user")
+            image = image_positions[image_key]
+            if v_distance(image, self.source) <= self.config.geometry_tolerance:
+                continue
+            reconstructed = self._reconstruct_path_from_image(image)
+            if reconstructed is None:
+                self.stats.rejected_visibility += 1
+                continue
+            patch_sequence, path_vertices = reconstructed
+            image_sequence = self._image_positions_for_sequence(patch_sequence)
+            event = self._make_event(patch_sequence, image_sequence, path_vertices)
+            if event is None:
+                continue
+            path_key = tuple(tuple(round(coordinate, 8) for coordinate in point) for point in event.path_vertices)
+            if path_key in seen_paths:
+                continue
+            seen_paths.add(path_key)
+            self.stats.visible_candidates += 1
+            self.stats.accepted_reflections += 1
+            self._events.append(event)
+
+        sorted_events = sorted(self._events, key=lambda e: (e.arrival_time_relative_s, e.order, e.path_length_m))
+        for path_id, event in enumerate(sorted_events):
+            event.path_id = path_id
+
+        return SimulationResult(
+            source=self.source,
+            receiver=self.receiver,
+            config=self.config,
+            events=sorted_events,
+            stats=self.stats,
+            scene_patch_count=len(self.scene.patches),
+            scene_triangle_count=len(self.scene.triangles),
+            source_inside_scene=source_inside,
+            receiver_inside_scene=receiver_inside,
+        )
+
+    def _image_key(self, image: Vec3) -> Tuple[float, float, float]:
+        return tuple(round(coordinate, 8) for coordinate in image)  # type: ignore[return-value]
+
+    def _reflect_point(self, point: Vec3, patch: ReflectorPatch) -> Vec3:
+        d = patch.offset - v_dot(point, patch.normal)
+        return v_add(point, v_mul(patch.normal, 2.0 * d))
+
+    def _generate_unique_images(self) -> Tuple[Dict[Tuple[float, float, float], Vec3], List[Tuple[float, float, float]]]:
+        source_key = self._image_key(self.source)
+        image_positions: Dict[Tuple[float, float, float], Vec3] = {source_key: self.source}
+        final_image_keys: List[Tuple[float, float, float]] = []
+        frontier = {(source_key, None)}
+
+        for order in range(1, self.config.max_order + 1):
+            next_frontier = set()
+            for image_key, last_patch_id in frontier:
+                parent_image = image_positions[image_key]
+                for patch in self.scene.patches:
+                    if last_patch_id is not None and patch.id == last_patch_id:
+                        continue
+                    if self.stats.nodes_reflected >= self.config.max_nodes:
+                        self.stats.hit_node_limit = True
+                        self.stats.unique_frontier_states = len(frontier)
+                        return image_positions, final_image_keys
+
+                    d = patch.offset - v_dot(parent_image, patch.normal)
+                    if self.config.two_sided_reflectors:
+                        if abs(d) <= self.config.plane_epsilon:
+                            self.stats.invalid_nodes += 1
+                            continue
+                    elif d <= self.config.plane_epsilon:
+                        self.stats.invalid_nodes += 1
+                        continue
+
+                    new_image = v_add(parent_image, v_mul(patch.normal, 2.0 * d))
+                    self.stats.nodes_reflected += 1
+                    if v_distance(new_image, self.receiver) > self._max_path_length + self.config.geometry_tolerance:
+                        self.stats.proximity_pruned_nodes += 1
+                        continue
+
+                    new_key = self._image_key(new_image)
+                    if new_key not in image_positions:
+                        image_positions[new_key] = new_image
+                        final_image_keys.append(new_key)
+                    next_frontier.add((new_key, patch.id))
+
+            self.stats.unique_frontier_states = len(next_frontier)
+            if not next_frontier:
+                self.stats.radius_completion_order = order
+                return image_positions, final_image_keys
+            frontier = next_frontier
+
+        self.stats.order_pruned_nodes = len(frontier)
+        self.stats.unique_frontier_states = len(frontier)
+        return image_positions, final_image_keys
+
+    def _reconstruct_path_from_image(self, final_image: Vec3) -> Optional[Tuple[Tuple[int, ...], Tuple[Vec3, ...]]]:
+        current = self.receiver
+        target = final_image
+        reflection_points_reversed: List[Vec3] = []
+        patch_sequence_reversed: List[int] = []
+
+        for _ in range(max(1, self.config.max_order)):
+            if v_distance(target, self.source) <= self.config.geometry_tolerance:
+                reflection_points = list(reversed(reflection_points_reversed))
+                path_vertices: Tuple[Vec3, ...] = tuple([self.source] + reflection_points + [self.receiver])
+                for start, end in zip(path_vertices, path_vertices[1:]):
+                    if self.scene.segment_blocked(start, end, endpoint_epsilon=self.config.endpoint_epsilon):
+                        self.stats.rejected_obstruction += 1
+                        return None
+                return tuple(reversed(patch_sequence_reversed)), path_vertices
+
+            hit = self.scene.first_segment_hit(
+                current,
+                target,
+                t_min=max(self.config.plane_epsilon, 1.0e-7),
+                t_max=1.0 - max(self.config.plane_epsilon, 1.0e-7),
+            )
+            if hit is None:
+                return None
+            t, triangle = hit
+            point = v_lerp(current, target, t)
+            patch = self.scene.patch(triangle.patch_id)
+            reflection_points_reversed.append(point)
+            patch_sequence_reversed.append(patch.id)
+            current = point
+            target = self._reflect_point(target, patch)
+
+        return None
+
+    def _image_positions_for_sequence(self, patch_sequence: Sequence[int]) -> List[Vec3]:
+        images = [self.source]
+        current = self.source
+        for patch_id in patch_sequence:
+            current = self._reflect_point(current, self.scene.patch(patch_id))
+            images.append(current)
+        return images
 
 
 # ---------------------------------------------------------------------------
@@ -1151,7 +1356,7 @@ def _relative_azimuth_deg(reference_direction: Vec3, direction: Vec3) -> float:
 __all__ = [
     "Vec3", "OCTAVE_BANDS_HZ", "Triangle", "ReflectorPatch", "Scene",
     "SimulationConfig", "ReflectionEvent", "SimulationStats", "SimulationResult",
-    "SimulationCancelled", "EarlyReflectionSolver", "build_impulse_response",
+    "SimulationCancelled", "EarlyReflectionSolver", "UniqueImageSourceSolver", "build_impulse_response",
     "write_wav_pcm16", "save_ancestry_json", "save_ancestry_csv", "save_result_bundle",
     "load_obj_scene",
 ]

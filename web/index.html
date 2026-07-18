@@ -115,7 +115,7 @@
           <summary>Advanced limits</summary>
           <label>Auto satisfy decay target <input id="autoSolveDecay" type="checkbox" checked></label>
           <label>Manual order ceiling <input id="maxOrder" type="number" min="0" max="24" value="12"></label>
-          <label>Node safety limit <input id="maxNodes" type="number" min="1" value="250000"></label>
+          <label>Unique-node safety limit <input id="maxNodes" type="number" min="1" value="5000000"></label>
           <label>Time cap, ms <input id="autoMaxTimeMs" type="number" min="1" value="2000"></label>
         </details>
         <p class="hint wide">All surfaces must have assigned material absorption before simulation.</p>
@@ -183,6 +183,6 @@
     <p>Based on Jeffrey Borish's arbitrary-polyhedron image-source algorithm.</p>
   </footer>
 
-  <script type="module" src="./src/main.js?v=auto_radius_20260718"></script>
+  <script type="module" src="./src/main.js?v=unique_radius_complete_20260718"></script>
 </body>
 </html>

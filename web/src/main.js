@@ -108,11 +108,12 @@ function renderRoomMetrics(result) {
   const validity = decay.valid ? "valid" : "not valid";
   const auto = result?.auto_solver;
   const autoStatus = auto?.enabled ? formatStatus(auto.status) : "manual";
+  const reportedOrder = result?.stats?.radius_completion_order || auto?.selected_radius_completion_order || auto?.selected_max_order || result?.config?.max_order || "n/a";
   elements.roomMetrics.innerHTML = `
     <div class="metric-strip">
       <span>Borish ISM ${String(decay.target_metric || "t30").toUpperCase()}: ${validity}</span>
       <span>solver ${autoStatus}</span>
-      <span>search order ${auto?.selected_max_order ?? result?.config?.max_order ?? "n/a"}</span>
+      <span>search order ${reportedOrder}</span>
       <span>time ${Number((auto?.selected_max_time_s ?? result?.config?.max_time_s ?? 0) * 1000).toFixed(0)} ms</span>
       <span>coverage ${decay.valid_band_count || 0}/${decay.band_count || 0}</span>
       <span>required ${Number(decay.required_decay_db || 0).toFixed(0)} dB</span>
@@ -1563,6 +1564,9 @@ worker.onmessage = (event) => {
       `auto_solver=${result.auto_solver?.status}`,
       `auto_iterations=${result.auto_solver?.iterations?.length || 0}`,
       `auto_selected_order=${result.auto_solver?.selected_max_order ?? result.config.max_order}`,
+      `radius_completion_order=${result.stats.radius_completion_order || 0}`,
+      `unique_image_sources=${result.stats.unique_image_sources || 0}`,
+      `unique_frontier_states=${result.stats.unique_frontier_states || 0}`,
       `manual_order_ceiling=${result.auto_solver?.manual_order_ceiling ?? result.config.max_order}`,
       `search_order_ceiling=${result.auto_solver?.search_order_ceiling ?? result.auto_solver?.order_cap ?? result.config.max_order}`,
       `auto_selected_time_ms=${Number((result.auto_solver?.selected_max_time_s ?? result.config.max_time_s) * 1000).toFixed(1)}`,

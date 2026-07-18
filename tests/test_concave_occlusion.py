@@ -8,7 +8,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
-from borish_core import EarlyReflectionSolver, SimulationConfig, load_obj_scene  # noqa: E402
+from borish_core import EarlyReflectionSolver, SimulationConfig, UniqueImageSourceSolver, load_obj_scene  # noqa: E402
 
 
 class ConcaveOcclusionTests(unittest.TestCase):
@@ -72,6 +72,26 @@ class ConcaveOcclusionTests(unittest.TestCase):
                 self.assertFalse(
                     self.scene.segment_blocked(start, end, endpoint_epsilon=1.0e-5)
                 )
+
+    def test_unique_image_solver_completes_the_web_l_room_radius(self):
+        web_scene = load_obj_scene(
+            os.path.join(ROOT, "web", "examples", "concave_l_room.obj"),
+            default_absorption=(0.05,) * 8,
+        )
+        config = SimulationConfig(
+            max_order=24,
+            max_time_s=0.120,
+            speed_of_sound=343.0,
+            band_index=4,
+            max_nodes=2_000_000,
+        )
+        unique = UniqueImageSourceSolver(web_scene, self.source, self.receiver, config).run()
+
+        self.assertTrue(unique.stats.radius_solver)
+        self.assertEqual(24, unique.stats.radius_completion_order)
+        self.assertFalse(unique.stats.hit_node_limit)
+        self.assertFalse(unique.stats.order_pruned_nodes)
+        self.assertGreater(len(unique.events), 2000)
 
 
 if __name__ == "__main__":
