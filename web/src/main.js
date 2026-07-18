@@ -13,6 +13,7 @@ const elements = {
   downloadWav: document.getElementById("downloadWav"),
   downloadDirectionalIr: document.getElementById("downloadDirectionalIr"),
   recordWebm: document.getElementById("recordWebm"),
+  decayTarget: document.getElementById("decayTarget"),
   log: document.getElementById("log"),
   roomMetrics: document.getElementById("roomMetrics"),
   toaTable: document.getElementById("toaTable"),
@@ -37,7 +38,7 @@ const elements = {
 };
 
 const viewer = makeViewer(document.getElementById("viewport"));
-const worker = new Worker(new URL("./ismWorker.js?v=ism_decay_20260718", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./ismWorker.js?v=decay_coverage_20260718", import.meta.url), { type: "module" });
 
 let mesh = null;
 let lastSimulation = null;
@@ -94,7 +95,9 @@ function renderRoomMetrics(result) {
   const validity = decay.valid ? "valid" : "not valid";
   elements.roomMetrics.innerHTML = `
     <div class="metric-strip">
-      <span>Borish ISM decay: ${validity}</span>
+      <span>Borish ISM ${String(decay.target_metric || "t30").toUpperCase()}: ${validity}</span>
+      <span>coverage ${decay.valid_band_count || 0}/${decay.band_count || 0}</span>
+      <span>required ${Number(decay.required_decay_db || 0).toFixed(0)} dB</span>
       <span>V ${Number(geometry?.volume_m3 || 0).toFixed(1)} m3</span>
       <span>S ${Number(geometry?.surface_area_m2 || 0).toFixed(1)} m2</span>
     </div>
@@ -130,6 +133,7 @@ function readPayload() {
       sample_rate: readNumber("sampleRate"),
       band_hz: "broadband",
       ir_mode: "broadband_mono",
+      decay_target: elements.decayTarget?.value || "t30",
       max_nodes: readNumber("maxNodes"),
       auto_flip_normals: true,
       surface_material_count: mesh.faces.filter(surfaceHasAssignedMaterial).length,

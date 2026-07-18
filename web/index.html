@@ -82,6 +82,13 @@
       <div class="settings">
         <label>Max order <input id="maxOrder" type="number" min="0" max="8" value="2"></label>
         <label>Max time after direct, ms <input id="maxTimeMs" type="number" min="1" value="120"></label>
+        <label>Decay target
+          <select id="decayTarget">
+            <option value="t30" selected>T30 (-5 to -35 dB)</option>
+            <option value="t20">T20 (-5 to -25 dB)</option>
+            <option value="edt">EDT (0 to -10 dB)</option>
+          </select>
+        </label>
         <label>Speed of sound, m/s <input id="speedOfSound" type="number" min="1" value="343"></label>
         <label>Sample rate <input id="sampleRate" type="number" min="8000" value="48000"></label>
 
@@ -174,6 +181,6 @@
     <p>Based on Jeffrey Borish's arbitrary-polyhedron image-source algorithm.</p>
   </footer>
 
-  <script type="module" src="./src/main.js?v=ism_decay_20260718"></script>
+  <script type="module" src="./src/main.js?v=decay_coverage_20260718"></script>
 </body>
 </html>

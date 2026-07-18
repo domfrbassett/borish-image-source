@@ -65,11 +65,15 @@ class PyodideApiTests(unittest.TestCase):
         result = json.loads(run_simulation_json(json.dumps(payload)))
         decay = result["result"]["ism_decay"]
         self.assertEqual("Borish image-source Schroeder decay", decay["method"])
+        self.assertEqual("t30", decay["target_metric"])
+        self.assertEqual(35.0, decay["required_decay_db"])
         self.assertEqual(8, len(decay["bands"]))
         self.assertIn("edt_s", decay["bands"][0])
         self.assertIn("t20_s", decay["bands"][0])
         self.assertIn("t30_s", decay["bands"][0])
         self.assertIn("energy_dynamic_range_db", decay["bands"][0])
+        self.assertEqual("t30", decay["bands"][0]["target_metric"])
+        self.assertEqual(35.0, decay["bands"][0]["required_decay_db"])
 
         metrics = result["result"]["room_acoustics"]
 

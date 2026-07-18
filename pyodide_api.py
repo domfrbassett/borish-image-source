@@ -551,12 +551,29 @@ def _schroeder_decay_fit(
     }
 
 
-def _ism_decay_estimate(result: SimulationResult, scene: Scene, completeness: Dict[str, Any]) -> Dict[str, Any]:
+_DECAY_TARGETS = {
+    "edt": {"label": "EDT", "upper_db": 0.0, "lower_db": -10.0, "required_decay_db": 10.0},
+    "t20": {"label": "T20", "upper_db": -5.0, "lower_db": -25.0, "required_decay_db": 25.0},
+    "t30": {"label": "T30", "upper_db": -5.0, "lower_db": -35.0, "required_decay_db": 35.0},
+}
+
+
+def _ism_decay_estimate(
+    result: SimulationResult,
+    scene: Scene,
+    completeness: Dict[str, Any],
+    *,
+    target: str = "t30",
+) -> Dict[str, Any]:
     sample_rate = result.config.sample_rate
     latest_event_s = max((max(0.0, event.arrival_time_relative_s) for event in result.events), default=0.0)
     duration_s = max(result.config.max_time_s, latest_event_s)
     sample_count = max(1, int(math.ceil(duration_s * sample_rate)) + 1)
     complete = bool(completeness.get("complete_within_time_radius"))
+    target_key = str(target or "t30").lower()
+    if target_key not in _DECAY_TARGETS:
+        target_key = "t30"
+    target_spec = _DECAY_TARGETS[target_key]
     bands = []
 
     for band_index, band_hz in enumerate(OCTAVE_BANDS_HZ):
@@ -601,11 +618,16 @@ def _ism_decay_estimate(result: SimulationResult, scene: Scene, completeness: Di
         edt = _schroeder_decay_fit(times, decay_db, 0.0, -10.0)
         t20 = _schroeder_decay_fit(times, decay_db, -5.0, -25.0)
         t30 = _schroeder_decay_fit(times, decay_db, -5.0, -35.0)
-        band_valid = complete and (t30["valid"] or t20["valid"] or edt["valid"])
+        fits = {"edt": edt, "t20": t20, "t30": t30}
+        target_fit = fits[target_key]
+        coverage_met = -min_decay_db >= float(target_spec["required_decay_db"])
+        band_valid = complete and bool(target_fit["valid"]) and coverage_met
         reasons = []
         if not complete:
             reasons.append("incomplete_borish_time_radius")
-        if not (t30["valid"] or t20["valid"] or edt["valid"]):
+        if not coverage_met:
+            reasons.append("insufficient_decay_depth")
+        if not target_fit["valid"]:
             reasons.append("insufficient_decay_range")
 
         bands.append({
@@ -613,23 +635,27 @@ def _ism_decay_estimate(result: SimulationResult, scene: Scene, completeness: Di
             "valid": band_valid,
             "reason": "; ".join(reasons) if reasons else None,
             "energy_dynamic_range_db": -min_decay_db,
+            "required_decay_db": target_spec["required_decay_db"],
+            "target_metric": target_key,
+            "target_rt60_s": target_fit["rt60_s"],
             "total_energy": reference_energy,
             "first_energy_time_s": first_index / sample_rate,
             "last_event_time_s": latest_event_s,
             "edt_s": edt["rt60_s"],
             "t20_s": t20["rt60_s"],
             "t30_s": t30["rt60_s"],
-            "fits": {
-                "edt": edt,
-                "t20": t20,
-                "t30": t30,
-            },
+            "fits": fits,
         })
 
+    valid_band_count = sum(1 for band in bands if band["valid"])
     return {
         "method": "Borish image-source Schroeder decay",
         "scope": "Computed from the deterministic octave-band image-source impulse responses only; no Sabine/Eyring late-field substitution is used here.",
-        "valid": complete and any(band["valid"] for band in bands),
+        "target_metric": target_key,
+        "required_decay_db": target_spec["required_decay_db"],
+        "valid": complete and valid_band_count == len(bands) and bool(bands),
+        "valid_band_count": valid_band_count,
+        "band_count": len(bands),
         "complete_within_time_radius": complete,
         "sample_rate": sample_rate,
         "duration_s": duration_s,
@@ -637,7 +663,13 @@ def _ism_decay_estimate(result: SimulationResult, scene: Scene, completeness: Di
     }
 
 
-def _result_to_dict(result: SimulationResult, scene: Scene, ir_scale: Optional[float]) -> Dict[str, Any]:
+def _result_to_dict(
+    result: SimulationResult,
+    scene: Scene,
+    ir_scale: Optional[float],
+    *,
+    decay_target: str = "t30",
+) -> Dict[str, Any]:
     direct_distance = math.dist(result.source, result.receiver)
     if result.config.time_reference == "direct":
         max_path_length = direct_distance + result.config.max_time_s * result.config.speed_of_sound
@@ -726,7 +758,12 @@ def _result_to_dict(result: SimulationResult, scene: Scene, ir_scale: Optional[f
             ],
         })
     payload["analysis"] = _directional_analysis(result, scene)
-    payload["ism_decay"] = _ism_decay_estimate(result, scene, payload["diagnostics"]["completeness"])
+    payload["ism_decay"] = _ism_decay_estimate(
+        result,
+        scene,
+        payload["diagnostics"]["completeness"],
+        target=decay_target,
+    )
     return payload
 
 
@@ -1012,7 +1049,12 @@ def run_simulation_json(payload_json: str) -> str:
     samples, ir_scale = build_impulse_response(result, reference="direct")
     wav = _wav_bytes(samples, result.config.sample_rate)
     directional_ir = _directional_ir_payload(result, scene, reference="direct")
-    result_dict = _result_to_dict(result, scene, ir_scale)
+    result_dict = _result_to_dict(
+        result,
+        scene,
+        ir_scale,
+        decay_target=str(options.get("decay_target", "t30")),
+    )
     result_dict["closure"] = closure
     result_dict["diagnostics"]["two_sided_reflectors"] = bool(result.config.two_sided_reflectors)
     result_dict["diagnostics"]["open_mesh_diagnostic_run"] = bool(closure.get("diagnostic_open_mesh_run", False))
