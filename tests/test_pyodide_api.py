@@ -67,6 +67,8 @@ class PyodideApiTests(unittest.TestCase):
         self.assertEqual("Borish image-source Schroeder decay", decay["method"])
         self.assertEqual("t30", decay["target_metric"])
         self.assertEqual(35.0, decay["required_decay_db"])
+        self.assertEqual(45.0, decay["validation_required_decay_db"])
+        self.assertEqual(10.0, decay["post_fit_margin_db"])
         self.assertEqual(8, len(decay["bands"]))
         self.assertIn("edt_s", decay["bands"][0])
         self.assertIn("t20_s", decay["bands"][0])
@@ -74,6 +76,7 @@ class PyodideApiTests(unittest.TestCase):
         self.assertIn("energy_dynamic_range_db", decay["bands"][0])
         self.assertEqual("t30", decay["bands"][0]["target_metric"])
         self.assertEqual(35.0, decay["bands"][0]["required_decay_db"])
+        self.assertEqual(45.0, decay["bands"][0]["validation_required_decay_db"])
 
         metrics = result["result"]["room_acoustics"]
 
@@ -86,6 +89,21 @@ class PyodideApiTests(unittest.TestCase):
         self.assertAlmostEqual(0.161 * 30.0 / 2.95, first_band["sabine_rt60_s"])
         expected_eyring = 0.161 * 30.0 / (-59.0 * math.log(1.0 - 0.05))
         self.assertAlmostEqual(expected_eyring, first_band["eyring_rt60_s"])
+
+    def test_wav_export_is_labelled_as_exact_borish_event_train(self):
+        payload = self._shoebox_payload()
+
+        result = json.loads(run_simulation_json(json.dumps(payload)))
+        impulse_response = result["impulse_response"]
+
+        self.assertEqual("exact_borish_event_train_mono", impulse_response["ir_mode"])
+        self.assertEqual("not_auralized", impulse_response["audio_rendering"])
+        self.assertFalse(impulse_response["contains_late_field"])
+        self.assertFalse(impulse_response["contains_hrtf"])
+        self.assertGreaterEqual(impulse_response["duration_s"], payload["options"]["max_time_s"])
+        self.assertIn("borish_time_radius_s", impulse_response)
+        self.assertIn("last_event_time_s", impulse_response)
+        self.assertGreater(len(impulse_response["warnings"]), 0)
 
     def test_coplanar_same_absorption_faces_are_one_reflector_patch(self):
         absorption = [0.05] * 8

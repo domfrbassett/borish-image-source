@@ -609,6 +609,7 @@ _DECAY_TARGETS = {
     "t20": {"label": "T20", "upper_db": -5.0, "lower_db": -25.0, "required_decay_db": 25.0},
     "t30": {"label": "T30", "upper_db": -5.0, "lower_db": -35.0, "required_decay_db": 35.0},
 }
+_DECAY_POST_FIT_MARGIN_DB = 10.0
 
 
 def _ism_decay_estimate(
@@ -627,6 +628,7 @@ def _ism_decay_estimate(
     if target_key not in _DECAY_TARGETS:
         target_key = "t30"
     target_spec = _DECAY_TARGETS[target_key]
+    validation_required_db = float(target_spec["required_decay_db"]) + _DECAY_POST_FIT_MARGIN_DB
     bands = []
 
     for band_index, band_hz in enumerate(OCTAVE_BANDS_HZ):
@@ -673,13 +675,16 @@ def _ism_decay_estimate(
         t30 = _schroeder_decay_fit(times, decay_db, -5.0, -35.0)
         fits = {"edt": edt, "t20": t20, "t30": t30}
         target_fit = fits[target_key]
-        coverage_met = -min_decay_db >= float(target_spec["required_decay_db"])
-        band_valid = complete and bool(target_fit["valid"]) and coverage_met
+        fit_range_met = -min_decay_db >= float(target_spec["required_decay_db"])
+        post_fit_margin_met = -min_decay_db >= validation_required_db
+        band_valid = complete and bool(target_fit["valid"]) and fit_range_met and post_fit_margin_met
         reasons = []
         if not complete:
             reasons.append("incomplete_borish_time_radius")
-        if not coverage_met:
+        if not fit_range_met:
             reasons.append("insufficient_decay_depth")
+        elif not post_fit_margin_met:
+            reasons.append("insufficient_post_fit_decay_margin")
         if not target_fit["valid"]:
             reasons.append("insufficient_decay_range")
 
@@ -689,8 +694,12 @@ def _ism_decay_estimate(
             "reason": "; ".join(reasons) if reasons else None,
             "energy_dynamic_range_db": -min_decay_db,
             "required_decay_db": target_spec["required_decay_db"],
+            "validation_required_decay_db": validation_required_db,
+            "post_fit_margin_db": _DECAY_POST_FIT_MARGIN_DB,
+            "post_fit_margin_met": post_fit_margin_met,
             "target_metric": target_key,
-            "target_rt60_s": target_fit["rt60_s"],
+            "target_rt60_s": target_fit["rt60_s"] if band_valid else None,
+            "diagnostic_target_rt60_s": target_fit["rt60_s"],
             "total_energy": reference_energy,
             "first_energy_time_s": first_index / sample_rate,
             "last_event_time_s": latest_event_s,
@@ -706,6 +715,8 @@ def _ism_decay_estimate(
         "scope": "Computed from the deterministic octave-band image-source impulse responses only; no Sabine/Eyring late-field substitution is used here.",
         "target_metric": target_key,
         "required_decay_db": target_spec["required_decay_db"],
+        "validation_required_decay_db": validation_required_db,
+        "post_fit_margin_db": _DECAY_POST_FIT_MARGIN_DB,
         "valid": complete and valid_band_count == len(bands) and bool(bands),
         "valid_band_count": valid_band_count,
         "band_count": len(bands),
@@ -1091,7 +1102,8 @@ def _run_borish_once(
     solver_class = UniqueImageSourceSolver if radius_solver and not bool(closure.get("diagnostic_open_mesh_run", False)) else EarlyReflectionSolver
     solver = solver_class(scene, source, receiver, config)
     result = solver.run(diagnose_inside=True)
-    samples, ir_scale = build_impulse_response(result, reference="direct")
+    render_duration_s = max(0.0, result.config.max_time_s) + 0.01
+    samples, ir_scale = build_impulse_response(result, reference="direct", duration_s=render_duration_s)
     result_dict = _result_to_dict(result, scene, ir_scale, decay_target=decay_target)
     result_dict["closure"] = closure
     result_dict["diagnostics"]["two_sided_reflectors"] = bool(result.config.two_sided_reflectors)
@@ -1214,6 +1226,78 @@ def _auto_solve_borish_decay(
     return (*last, auto_report)
 
 
+def _median(values: Sequence[float]) -> Optional[float]:
+    finite = sorted(value for value in values if math.isfinite(value))
+    if not finite:
+        return None
+    midpoint = len(finite) // 2
+    if len(finite) % 2:
+        return finite[midpoint]
+    return 0.5 * (finite[midpoint - 1] + finite[midpoint])
+
+
+def _representative_eyring_rt60(room_acoustics: Dict[str, Any]) -> Optional[float]:
+    return _median([
+        float(row["eyring_rt60_s"])
+        for row in room_acoustics.get("octave_bands", [])
+        if row.get("eyring_rt60_s") is not None
+    ])
+
+
+def _representative_ism_rt60(decay: Dict[str, Any]) -> Optional[float]:
+    target = str(decay.get("target_metric") or "t30").lower()
+    return _median([
+        float(row[f"{target}_s"])
+        for row in decay.get("bands", [])
+        if row.get(f"{target}_s") is not None
+    ])
+
+
+def _impulse_response_payload(
+    result: SimulationResult,
+    result_dict: Dict[str, Any],
+    samples: Sequence[float],
+    ir_scale: float,
+) -> Dict[str, Any]:
+    sample_rate = result.config.sample_rate
+    duration_s = len(samples) / float(sample_rate)
+    latest_event_s = max((max(0.0, event.arrival_time_relative_s) for event in result.events), default=0.0)
+    borish_radius_s = result.config.max_time_s
+    eyring_rt60_s = _representative_eyring_rt60(result_dict.get("room_acoustics", {}))
+    ism_rt60_s = _representative_ism_rt60(result_dict.get("ism_decay", {}))
+    warnings = [
+        "WAV contains the exact deterministic Borish image-source event train only; no diffuse late reverberation is synthesized.",
+        "No directional convolution, HRTF, or interaural approximation is applied to the WAV export.",
+    ]
+    if eyring_rt60_s is not None and duration_s < eyring_rt60_s:
+        warnings.append(
+            "The event-train WAV is shorter than the Eyring RT60 estimate, so playback will not contain a full audible room decay."
+        )
+
+    return {
+        "sample_rate": sample_rate,
+        "sample_count": len(samples),
+        "duration_s": duration_s,
+        "scale": ir_scale,
+        "ir_mode": "exact_borish_event_train_mono",
+        "audio_rendering": "not_auralized",
+        "band_aggregation": "energy_average_across_octave_absorption_coefficients",
+        "borish_time_radius_s": borish_radius_s,
+        "last_event_time_s": latest_event_s,
+        "silence_after_last_event_s": max(0.0, duration_s - latest_event_s),
+        "complete_within_time_radius": bool(result_dict.get("diagnostics", {}).get("completeness", {}).get("complete_within_time_radius")),
+        "contains_late_field": False,
+        "contains_directional_convolution": False,
+        "contains_hrtf": False,
+        "auralization_ready": False,
+        "representative_eyring_rt60_s": eyring_rt60_s,
+        "representative_ism_rt60_s": ism_rt60_s,
+        "warnings": warnings,
+        "sparse": _sparse_impulse_plot(result),
+        "band_sparse": result_dict["analysis"]["band_sparse_ir"],
+    }
+
+
 def run_simulation_json(payload_json: str) -> str:
     payload = json.loads(payload_json)
     mesh = payload["mesh"]
@@ -1286,24 +1370,17 @@ def run_simulation_json(payload_json: str) -> str:
     result_dict["auto_solver"] = auto_report
     toa = _toa_table(result, scene)
 
+    impulse_response = _impulse_response_payload(result, result_dict, samples, ir_scale)
     response = {
         "result": result_dict,
         "toa": toa,
         "toa_csv": _csv_from_rows(toa),
-        "impulse_response": {
-            "sample_rate": result.config.sample_rate,
-            "sample_count": len(samples),
-            "duration_s": len(samples) / float(result.config.sample_rate),
-            "scale": ir_scale,
-            "ir_mode": "broadband_mono",
-            "band_aggregation": "energy_average_across_octave_absorption_coefficients",
-            "sparse": _sparse_impulse_plot(result),
-            "band_sparse": result_dict["analysis"]["band_sparse_ir"],
-        },
+        "impulse_response": impulse_response,
         "auralization": {
             "status": "not_implemented",
-            "reason": "Directional convolution/rendering requires an explicitly selected receiver, loudspeaker, Ambisonic, or HRTF model.",
+            "reason": "No directional convolution or late-field renderer is currently applied; the WAV is the exact mono Borish event train, not a binaural or HRTF approximation.",
             "available_input": "directional_ir",
+            "no_fake_hrtf": True,
         },
         "wav_base64": base64.b64encode(wav).decode("ascii"),
         "directional_ir": directional_ir,

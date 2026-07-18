@@ -71,6 +71,7 @@ function formatSeconds(value) {
 
 function formatDecayFitSeconds(decay, band, key) {
   if (!decay?.complete_within_time_radius) return "n/a";
+  if (key === decay?.target_metric && !band?.valid) return "n/a";
   const fit = band?.fits?.[key];
   if (!fit?.valid) return "n/a";
   return formatSeconds(band?.[`${key}_s`]);
@@ -116,7 +117,7 @@ function renderRoomMetrics(result) {
       <span>search order ${reportedOrder}</span>
       <span>time ${Number((auto?.selected_max_time_s ?? result?.config?.max_time_s ?? 0) * 1000).toFixed(0)} ms</span>
       <span>coverage ${decay.valid_band_count || 0}/${decay.band_count || 0}</span>
-      <span>required ${Number(decay.required_decay_db || 0).toFixed(0)} dB</span>
+      <span>required ${Number(decay.validation_required_decay_db || decay.required_decay_db || 0).toFixed(0)} dB</span>
       <span>V ${Number(geometry?.volume_m3 || 0).toFixed(1)} m3</span>
       <span>S ${Number(geometry?.surface_area_m2 || 0).toFixed(1)} m2</span>
     </div>
@@ -1542,6 +1543,7 @@ worker.onmessage = (event) => {
     const orderCounts = new Map();
     for (const path of result.paths) orderCounts.set(path.order, (orderCounts.get(path.order) || 0) + 1);
     const orderText = [...orderCounts.entries()].sort((a, b) => a[0] - b[0]).map(([order, count]) => `order_${order}_paths=${count}`).join("\n");
+    const ir = lastSimulation.impulse_response || {};
     log([
       "SIMULATION COMPLETE",
       `source_inside=${result.diagnostics.source_inside_scene}`,
@@ -1572,6 +1574,11 @@ worker.onmessage = (event) => {
       `auto_selected_time_ms=${Number((result.auto_solver?.selected_max_time_s ?? result.config.max_time_s) * 1000).toFixed(1)}`,
       `ism_decay_valid=${result.ism_decay?.valid}`,
       `ism_decay_complete=${result.ism_decay?.complete_within_time_radius}`,
+      `ism_decay_required_db=${Number(result.ism_decay?.validation_required_decay_db ?? result.ism_decay?.required_decay_db ?? 0).toFixed(1)}`,
+      `wav_mode=${ir.ir_mode || "unknown"}`,
+      `wav_duration_ms=${Number((ir.duration_s || 0) * 1000).toFixed(1)}`,
+      `last_event_ms=${Number((ir.last_event_time_s || 0) * 1000).toFixed(1)}`,
+      ...(ir.warnings || []).map((warning) => `WARNING: ${warning}`),
       ...(result.diagnostics.completeness?.warnings || []).map((warning) => `WARNING: ${warning}`),
       orderText,
     ].join("\n"));
@@ -1704,7 +1711,7 @@ elements.downloadCsv.addEventListener("click", () => {
 });
 
 elements.downloadWav.addEventListener("click", () => {
-  if (lastSimulation) downloadBase64(`${lastFilenameBase}_impulse_response.wav`, lastSimulation.wav_base64, "audio/wav");
+  if (lastSimulation) downloadBase64(`${lastFilenameBase}_borish_event_train.wav`, lastSimulation.wav_base64, "audio/wav");
 });
 
 elements.downloadDirectionalIr.addEventListener("click", () => {
