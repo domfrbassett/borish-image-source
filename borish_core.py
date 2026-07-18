@@ -31,6 +31,7 @@ import wave
 
 Vec3 = Tuple[float, float, float]
 OCTAVE_BANDS_HZ: Tuple[float, ...] = (62.5, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0)
+_PLANE_GROUP_TOLERANCE = 1.0e-7
 
 
 # ---------------------------------------------------------------------------
@@ -854,6 +855,35 @@ def save_result_bundle(output_base: str, result: SimulationResult, scene: Scene)
 # OBJ adapter (standalone / testing)
 # ---------------------------------------------------------------------------
 
+def _plane_group_key(normal: Vec3, offset: float, absorption: Sequence[float]) -> Tuple[Any, ...]:
+    scale = 1.0 / _PLANE_GROUP_TOLERANCE
+    return (
+        round(normal[0] * scale),
+        round(normal[1] * scale),
+        round(normal[2] * scale),
+        round(offset * scale),
+        tuple(round(float(value), 10) for value in absorption),
+    )
+
+
+def _merged_obj_metadata(face_metadata: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    first = dict(face_metadata[0])
+    if len(face_metadata) == 1:
+        first["source_face_indices"] = [first.get("face_index")]
+        return first
+
+    face_indices = [metadata.get("face_index") for metadata in face_metadata]
+    group_names = [
+        str(metadata.get("group_name") or metadata.get("object_name") or f"Face_{metadata.get('face_index')}")
+        for metadata in face_metadata
+    ]
+    first["group_name"] = f"{group_names[0]} (+{len(group_names) - 1} coplanar)"
+    first["merged_coplanar_faces"] = len(face_metadata)
+    first["source_face_indices"] = face_indices
+    first["source_surface_names"] = group_names
+    return first
+
+
 def load_obj_scene(
     path: str,
     *,
@@ -907,7 +937,7 @@ def load_obj_scene(
     triangles: List[Triangle] = []
     patches: List[ReflectorPatch] = []
     triangle_id = 0
-    patch_id = 0
+    grouped_faces: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
 
     for face_index, (indices, object_name, group_name, material_name) in enumerate(faces):
         face_points = [vertices[index] for index in indices]
@@ -919,6 +949,13 @@ def load_obj_scene(
         offset = v_dot(face_points[0], normal)
         planar = all(abs(v_dot(point, normal) - offset) <= planarity_tolerance for point in face_points)
         alpha = tuple(material_absorption.get(material_name, default_absorption))
+        metadata = {
+            "source": "obj",
+            "object_name": object_name,
+            "group_name": group_name,
+            "material_name": material_name,
+            "face_index": face_index,
+        }
 
         # Fan triangulation.  A non-planar polygon becomes one patch per triangle.
         generated: List[Tuple[Vec3, Vec3, Vec3]] = []
@@ -929,50 +966,59 @@ def load_obj_scene(
             generated.append((a, b, c))
 
         if planar:
-            tri_ids: List[int] = []
+            oriented_triangles: List[Tuple[Vec3, Vec3, Vec3]] = []
             for a, b, c in generated:
                 if v_dot(v_cross(v_sub(b, a), v_sub(c, a)), normal) < 0.0:
                     b, c = c, b
-                triangles.append(Triangle(triangle_id, a, b, c, patch_id))
-                tri_ids.append(triangle_id)
-                triangle_id += 1
-            if tri_ids:
-                patches.append(ReflectorPatch(
-                    id=patch_id,
-                    normal=normal,
-                    offset=offset,
-                    triangle_ids=tuple(tri_ids),
-                    absorption=alpha,
-                    metadata={
-                        "source": "obj",
-                        "object_name": object_name,
-                        "group_name": group_name,
-                        "material_name": material_name,
-                        "face_index": face_index,
+                oriented_triangles.append((a, b, c))
+            if oriented_triangles:
+                key = _plane_group_key(normal, offset, alpha)
+                group = grouped_faces.setdefault(
+                    key,
+                    {
+                        "normal": normal,
+                        "offset": offset,
+                        "absorption": alpha,
+                        "triangles": [],
+                        "metadata": [],
                     },
-                ))
-                patch_id += 1
+                )
+                group["triangles"].extend(oriented_triangles)
+                group["metadata"].append(metadata)
         else:
             for local_triangle_index, (a, b, c) in enumerate(generated):
                 tri_normal = v_normalize(v_cross(v_sub(b, a), v_sub(c, a)))
-                triangles.append(Triangle(triangle_id, a, b, c, patch_id))
-                patches.append(ReflectorPatch(
-                    id=patch_id,
-                    normal=tri_normal,
-                    offset=v_dot(a, tri_normal),
-                    triangle_ids=(triangle_id,),
-                    absorption=alpha,
-                    metadata={
-                        "source": "obj",
-                        "object_name": object_name,
-                        "group_name": group_name,
-                        "material_name": material_name,
-                        "face_index": face_index,
-                        "triangle_index": local_triangle_index,
+                key = _plane_group_key(tri_normal, v_dot(a, tri_normal), alpha) + (("nonplanar", face_index, local_triangle_index),)
+                group = grouped_faces.setdefault(
+                    key,
+                    {
+                        "normal": tri_normal,
+                        "offset": v_dot(a, tri_normal),
+                        "absorption": alpha,
+                        "triangles": [],
+                        "metadata": [],
                     },
-                ))
-                triangle_id += 1
-                patch_id += 1
+                )
+                group["triangles"].append((a, b, c))
+                triangle_metadata = dict(metadata)
+                triangle_metadata["triangle_index"] = local_triangle_index
+                group["metadata"].append(triangle_metadata)
+
+    for patch_id, group in enumerate(grouped_faces.values()):
+        tri_ids: List[int] = []
+        for a, b, c in group["triangles"]:
+            triangles.append(Triangle(triangle_id, a, b, c, patch_id))
+            tri_ids.append(triangle_id)
+            triangle_id += 1
+        if tri_ids:
+            patches.append(ReflectorPatch(
+                id=patch_id,
+                normal=group["normal"],
+                offset=group["offset"],
+                triangle_ids=tuple(tri_ids),
+                absorption=group["absorption"],
+                metadata=_merged_obj_metadata(group["metadata"]),
+            ))
 
     return Scene(triangles, patches)
 

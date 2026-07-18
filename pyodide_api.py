@@ -35,6 +35,7 @@ from borish_core import (
 )
 
 Vec3 = Tuple[float, float, float]
+_PLANE_GROUP_TOLERANCE = 1.0e-7
 
 
 def _vec3(value: Sequence[float]) -> Vec3:
@@ -218,6 +219,36 @@ def _triangulate_face(indices: Sequence[int], flip: bool = False) -> Iterable[Tu
         yield tri
 
 
+def _plane_group_key(normal: Vec3, offset: float, absorption: Sequence[float]) -> Tuple[Any, ...]:
+    scale = 1.0 / _PLANE_GROUP_TOLERANCE
+    return (
+        round(normal[0] * scale),
+        round(normal[1] * scale),
+        round(normal[2] * scale),
+        round(offset * scale),
+        tuple(round(float(value), 10) for value in absorption),
+    )
+
+
+def _merged_patch_metadata(face_metadata: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    first = dict(face_metadata[0])
+    if len(face_metadata) == 1:
+        first["source_face_indices"] = [first.get("face_index")]
+        return first
+
+    face_indices = [metadata.get("face_index") for metadata in face_metadata]
+    surface_names = [
+        str(metadata.get("surface_name") or metadata.get("group_name") or f"Face_{metadata.get('face_index')}")
+        for metadata in face_metadata
+    ]
+    first["surface_name"] = f"{surface_names[0]} (+{len(surface_names) - 1} coplanar)"
+    first["group_name"] = first["surface_name"]
+    first["merged_coplanar_faces"] = len(face_metadata)
+    first["source_face_indices"] = face_indices
+    first["source_surface_names"] = surface_names
+    return first
+
+
 def mesh_closure_report(mesh: Dict[str, Any]) -> Dict[str, Any]:
     """Return closure/orientation diagnostics for a mesh JSON object."""
     mesh = _weld_mesh_vertices(mesh, tolerance=float(mesh.get("weld_tolerance", 1.0e-9)))
@@ -351,39 +382,60 @@ def scene_from_mesh_json(
     triangles: List[Triangle] = []
     patches: List[ReflectorPatch] = []
     triangle_id = 0
+    grouped_faces: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
 
-    for patch_id, raw_face in enumerate(raw_faces):
+    for face_index, raw_face in enumerate(raw_faces):
         indices = _face_indices(raw_face)
         local_indices = list(reversed(indices)) if flip else list(indices)
         normal = _polygon_normal(vertices, local_indices)
         offset = v_dot(vertices[local_indices[0]], normal)
+        absorption = _face_absorption(raw_face, default_absorption)
+        key = _plane_group_key(normal, offset, absorption)
+        group = grouped_faces.setdefault(
+            key,
+            {
+                "normal": normal,
+                "offset": offset,
+                "absorption": absorption,
+                "faces": [],
+                "metadata": [],
+            },
+        )
+        group["faces"].append(local_indices)
+        group["metadata"].append(_face_metadata(raw_face, face_index))
+
+    for patch_id, group in enumerate(grouped_faces.values()):
         patch_triangle_ids: List[int] = []
 
-        for a_i, b_i, c_i in _triangulate_face(local_indices):
-            triangle = Triangle(
-                id=triangle_id,
-                a=vertices[a_i],
-                b=vertices[b_i],
-                c=vertices[c_i],
-                patch_id=patch_id,
-            )
-            triangles.append(triangle)
-            patch_triangle_ids.append(triangle_id)
-            triangle_id += 1
+        for local_indices in group["faces"]:
+            for a_i, b_i, c_i in _triangulate_face(local_indices):
+                triangle = Triangle(
+                    id=triangle_id,
+                    a=vertices[a_i],
+                    b=vertices[b_i],
+                    c=vertices[c_i],
+                    patch_id=patch_id,
+                )
+                triangles.append(triangle)
+                patch_triangle_ids.append(triangle_id)
+                triangle_id += 1
 
+        if not patch_triangle_ids:
+            continue
         patches.append(
             ReflectorPatch(
                 id=patch_id,
-                normal=normal,
-                offset=offset,
+                normal=group["normal"],
+                offset=group["offset"],
                 triangle_ids=tuple(patch_triangle_ids),
-                absorption=_face_absorption(raw_face, default_absorption),
-                metadata=_face_metadata(raw_face, patch_id),
+                absorption=group["absorption"],
+                metadata=_merged_patch_metadata(group["metadata"]),
             )
         )
 
     report["normals_flipped"] = flip
     report["patch_count"] = len(patches)
+    report["merged_coplanar_faces"] = len(raw_faces) - len(patches)
     report["triangle_count"] = len(triangles)
     return Scene(triangles, patches), report
 

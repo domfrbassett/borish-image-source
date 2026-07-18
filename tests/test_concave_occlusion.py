@@ -48,9 +48,9 @@ class ConcaveOcclusionTests(unittest.TestCase):
         counts = collections.Counter(event.order for event in result.events)
         self.assertEqual({2: 3, 3: 12, 4: 28}, dict(counts))
         self.assertEqual(43, len(result.events))
-        self.assertEqual(3131, result.stats.nodes_reflected)
+        self.assertEqual(1305, result.stats.nodes_reflected)
         self.assertEqual(55, result.stats.rejected_obstruction)
-        self.assertEqual(3033, result.stats.rejected_visibility)
+        self.assertEqual(1207, result.stats.rejected_visibility)
         self.assertFalse(result.stats.hit_node_limit)
 
         direct_distance = math.dist(self.source, self.receiver)

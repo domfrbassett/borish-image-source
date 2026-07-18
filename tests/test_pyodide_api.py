@@ -87,6 +87,34 @@ class PyodideApiTests(unittest.TestCase):
         expected_eyring = 0.161 * 30.0 / (-59.0 * math.log(1.0 - 0.05))
         self.assertAlmostEqual(expected_eyring, first_band["eyring_rt60_s"])
 
+    def test_coplanar_same_absorption_faces_are_one_reflector_patch(self):
+        absorption = [0.05] * 8
+        mesh = {
+            "vertices": [
+                [0, 0, 0], [2, 0, 0], [4, 0, 0], [4, 3, 0], [2, 3, 0], [0, 3, 0],
+                [0, 0, 2.5], [2, 0, 2.5], [4, 0, 2.5], [4, 3, 2.5], [2, 3, 2.5], [0, 3, 2.5],
+            ],
+            "faces": [
+                {"indices": [0, 5, 11, 6], "absorption": absorption, "acoustic_material": "wall"},
+                {"indices": [2, 8, 9, 3], "absorption": absorption, "acoustic_material": "wall"},
+                {"indices": [0, 6, 7, 8, 2, 1], "absorption": absorption, "acoustic_material": "wall"},
+                {"indices": [5, 4, 3, 9, 10, 11], "absorption": absorption, "acoustic_material": "wall"},
+                {"indices": [0, 1, 4, 5], "absorption": absorption, "acoustic_material": "floor"},
+                {"indices": [1, 2, 3, 4], "absorption": absorption, "acoustic_material": "floor"},
+                {"indices": [6, 11, 10, 9, 8, 7], "absorption": absorption, "acoustic_material": "ceiling"},
+            ],
+        }
+        payload = self._shoebox_payload()
+        payload["mesh"] = mesh
+
+        result = json.loads(run_simulation_json(json.dumps(payload)))
+
+        closure = result["result"]["closure"]
+        self.assertEqual(7, closure["face_count"])
+        self.assertEqual(6, closure["patch_count"])
+        self.assertEqual(1, closure["merged_coplanar_faces"])
+        self.assertAlmostEqual(59.0, result["result"]["room_acoustics"]["surface_area_m2"])
+
     def test_auto_decay_solver_reports_budget_status(self):
         payload = self._shoebox_payload()
         payload["options"]["auto_solve_decay"] = True
