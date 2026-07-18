@@ -39,7 +39,7 @@ const elements = {
 };
 
 const viewer = makeViewer(document.getElementById("viewport"));
-const worker = new Worker(new URL("./ismWorker.js?v=stat_rt_validation_20260719", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./ismWorker.js?v=stat_rt_reason_20260719", import.meta.url), { type: "module" });
 
 let mesh = null;
 let lastSimulation = null;

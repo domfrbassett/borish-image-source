@@ -7,7 +7,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
-from pyodide_api import run_simulation_json  # noqa: E402
+from pyodide_api import _validate_decay_against_room_acoustics, run_simulation_json  # noqa: E402
 
 
 class PyodideApiTests(unittest.TestCase):
@@ -129,6 +129,38 @@ class PyodideApiTests(unittest.TestCase):
         self.assertLess(scattered_band_7, no_scatter_band_0)
         self.assertEqual(scatter, result["result"]["scene"]["patches"][0]["scattering"])
         self.assertIn("mean_scattering_by_band", result["result"]["room_acoustics"])
+
+    def test_statistical_rt_mismatch_is_reported_even_when_other_checks_fail(self):
+        decay = {
+            "target_metric": "t30",
+            "complete_within_time_radius": True,
+            "bands": [{
+                "band_hz": 1000.0,
+                "valid": False,
+                "reason": "insufficient_time_horizon_for_fitted_decay",
+                "t30_s": 0.4,
+                "metric_validity": {
+                    "t30": {
+                        "valid": False,
+                        "reason": "insufficient_time_horizon_for_fitted_decay",
+                    },
+                },
+            }],
+        }
+        room_acoustics = {
+            "valid_for_rt_estimate": True,
+            "octave_bands": [{
+                "band_hz": 1000.0,
+                "eyring_rt60_s": 1.0,
+                "sabine_rt60_s": 1.05,
+            }],
+        }
+
+        _validate_decay_against_room_acoustics(decay, room_acoustics)
+
+        reason = decay["bands"][0]["metric_validity"]["t30"]["reason"]
+        self.assertIn("insufficient_time_horizon_for_fitted_decay", reason)
+        self.assertIn("statistical_rt_mismatch", reason)
 
     def test_coplanar_same_absorption_faces_are_one_reflector_patch(self):
         absorption = [0.05] * 8

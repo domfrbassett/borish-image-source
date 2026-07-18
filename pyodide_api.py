@@ -872,8 +872,9 @@ def _validate_decay_against_room_acoustics(decay: Dict[str, Any], room_acoustics
             comparison = _statistical_rt_comparison(rt60_s, eyring_s, sabine_s)
             comparisons[metric_key] = comparison
             validity = band.get("metric_validity", {}).get(metric_key)
-            if validity and validity.get("valid") and not comparison["valid"]:
-                validity["valid"] = False
+            if validity and rt60_s is not None and not comparison["valid"]:
+                if validity.get("valid"):
+                    validity["valid"] = False
                 validity["reason"] = _append_reason(validity.get("reason"), "statistical_rt_mismatch")
         band["statistical_rt_validation"] = comparisons
         target_validity = band.get("metric_validity", {}).get(target_metric)
