@@ -77,6 +77,10 @@ class PyodideApiTests(unittest.TestCase):
         self.assertEqual("t30", decay["bands"][0]["target_metric"])
         self.assertEqual(35.0, decay["bands"][0]["required_decay_db"])
         self.assertEqual(45.0, decay["bands"][0]["validation_required_decay_db"])
+        self.assertIn("metric_validity", decay["bands"][0])
+        self.assertIn("edt", decay["bands"][0]["metric_validity"])
+        self.assertIn("t20", decay["bands"][0]["metric_validity"])
+        self.assertIn("t30", decay["bands"][0]["metric_validity"])
 
         metrics = result["result"]["room_acoustics"]
 
@@ -89,6 +93,10 @@ class PyodideApiTests(unittest.TestCase):
         self.assertAlmostEqual(0.161 * 30.0 / 2.95, first_band["sabine_rt60_s"])
         expected_eyring = 0.161 * 30.0 / (-59.0 * math.log(1.0 - 0.05))
         self.assertAlmostEqual(expected_eyring, first_band["eyring_rt60_s"])
+        self.assertIn("statistical_validation", decay)
+        self.assertEqual("eyring_rt60_s", decay["statistical_validation"]["reference"])
+        self.assertIn("statistical_rt_validation", decay["bands"][0])
+        self.assertIn("t30", decay["bands"][0]["statistical_rt_validation"])
 
     def test_wav_export_is_labelled_as_exact_borish_event_train(self):
         payload = self._shoebox_payload()
@@ -171,6 +179,7 @@ class PyodideApiTests(unittest.TestCase):
             "borish_radius_not_exhausted",
             "time_cap_exceeded",
             "decay_depth_not_reached",
+            "statistical_validation_failed",
             "iteration_limit",
         })
 

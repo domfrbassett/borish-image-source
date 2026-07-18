@@ -635,6 +635,8 @@ _DECAY_TARGETS = {
     "t30": {"label": "T30", "upper_db": -5.0, "lower_db": -35.0, "required_decay_db": 35.0},
 }
 _DECAY_POST_FIT_MARGIN_DB = 10.0
+_STATISTICAL_RT_REL_TOLERANCE = 0.35
+_STATISTICAL_RT_ABS_TOLERANCE_S = 0.08
 
 
 def _fit_time_at_db(fit: Dict[str, Any], db: float) -> Optional[float]:
@@ -650,6 +652,49 @@ def _fit_time_at_db(fit: Dict[str, Any], db: float) -> Optional[float]:
     if not math.isfinite(time_s):
         return None
     return max(0.0, time_s)
+
+
+def _validate_decay_metric(
+    fit: Dict[str, Any],
+    spec: Dict[str, float],
+    min_decay_db: float,
+    complete: bool,
+    duration_s: float,
+    sample_rate: int,
+) -> Dict[str, Any]:
+    validation_required_db = float(spec["required_decay_db"]) + _DECAY_POST_FIT_MARGIN_DB
+    validation_floor_db = float(spec["lower_db"]) - _DECAY_POST_FIT_MARGIN_DB
+    fit_validation_horizon_s = _fit_time_at_db(fit, validation_floor_db)
+    fit_range_met = -min_decay_db >= float(spec["required_decay_db"])
+    post_fit_margin_met = -min_decay_db >= validation_required_db
+    time_horizon_met = (
+        fit_validation_horizon_s is None
+        or duration_s + (1.0 / max(1, sample_rate)) >= fit_validation_horizon_s
+    )
+    reasons = []
+    if not complete:
+        reasons.append("incomplete_borish_time_radius")
+    if not fit_range_met:
+        reasons.append("insufficient_decay_depth")
+    elif not post_fit_margin_met:
+        reasons.append("insufficient_post_fit_decay_margin")
+    if not time_horizon_met:
+        reasons.append("insufficient_time_horizon_for_fitted_decay")
+    if not fit.get("valid"):
+        reasons.append(str(fit.get("reason") or "insufficient_decay_range"))
+    valid = complete and bool(fit.get("valid")) and fit_range_met and post_fit_margin_met and time_horizon_met
+    return {
+        "valid": valid,
+        "reason": "; ".join(reasons) if reasons else None,
+        "required_decay_db": float(spec["required_decay_db"]),
+        "validation_required_decay_db": validation_required_db,
+        "post_fit_margin_db": _DECAY_POST_FIT_MARGIN_DB,
+        "post_fit_margin_met": post_fit_margin_met,
+        "fit_validation_floor_db": validation_floor_db,
+        "fit_validation_horizon_s": fit_validation_horizon_s,
+        "time_horizon_s": duration_s,
+        "time_horizon_met": time_horizon_met,
+    }
 
 
 def _ism_decay_estimate(
@@ -714,41 +759,34 @@ def _ism_decay_estimate(
         t20 = _schroeder_decay_fit(times, decay_db, -5.0, -25.0)
         t30 = _schroeder_decay_fit(times, decay_db, -5.0, -35.0)
         fits = {"edt": edt, "t20": t20, "t30": t30}
+        metric_validity = {
+            metric_key: _validate_decay_metric(
+                fits[metric_key],
+                spec,
+                min_decay_db,
+                complete,
+                duration_s,
+                sample_rate,
+            )
+            for metric_key, spec in _DECAY_TARGETS.items()
+        }
         target_fit = fits[target_key]
-        validation_floor_db = float(target_spec["lower_db"]) - _DECAY_POST_FIT_MARGIN_DB
-        fit_validation_horizon_s = _fit_time_at_db(target_fit, validation_floor_db)
-        time_horizon_met = (
-            fit_validation_horizon_s is None
-            or duration_s + (1.0 / max(1, sample_rate)) >= fit_validation_horizon_s
-        )
-        fit_range_met = -min_decay_db >= float(target_spec["required_decay_db"])
-        post_fit_margin_met = -min_decay_db >= validation_required_db
-        band_valid = complete and bool(target_fit["valid"]) and fit_range_met and post_fit_margin_met and time_horizon_met
-        reasons = []
-        if not complete:
-            reasons.append("incomplete_borish_time_radius")
-        if not fit_range_met:
-            reasons.append("insufficient_decay_depth")
-        elif not post_fit_margin_met:
-            reasons.append("insufficient_post_fit_decay_margin")
-        if not time_horizon_met:
-            reasons.append("insufficient_time_horizon_for_fitted_decay")
-        if not target_fit["valid"]:
-            reasons.append("insufficient_decay_range")
+        target_validity = metric_validity[target_key]
+        band_valid = bool(target_validity["valid"])
 
         bands.append({
             "band_hz": band_hz,
             "valid": band_valid,
-            "reason": "; ".join(reasons) if reasons else None,
+            "reason": target_validity["reason"],
             "energy_dynamic_range_db": -min_decay_db,
             "required_decay_db": target_spec["required_decay_db"],
             "validation_required_decay_db": validation_required_db,
             "post_fit_margin_db": _DECAY_POST_FIT_MARGIN_DB,
-            "post_fit_margin_met": post_fit_margin_met,
-            "fit_validation_floor_db": validation_floor_db,
-            "fit_validation_horizon_s": fit_validation_horizon_s,
+            "post_fit_margin_met": target_validity["post_fit_margin_met"],
+            "fit_validation_floor_db": target_validity["fit_validation_floor_db"],
+            "fit_validation_horizon_s": target_validity["fit_validation_horizon_s"],
             "time_horizon_s": duration_s,
-            "time_horizon_met": time_horizon_met,
+            "time_horizon_met": target_validity["time_horizon_met"],
             "target_metric": target_key,
             "target_rt60_s": target_fit["rt60_s"] if band_valid else None,
             "diagnostic_target_rt60_s": target_fit["rt60_s"],
@@ -759,6 +797,7 @@ def _ism_decay_estimate(
             "t20_s": t20["rt60_s"],
             "t30_s": t30["rt60_s"],
             "fits": fits,
+            "metric_validity": metric_validity,
         })
 
     valid_band_count = sum(1 for band in bands if band["valid"])
@@ -776,6 +815,82 @@ def _ism_decay_estimate(
         "sample_rate": sample_rate,
         "duration_s": duration_s,
         "bands": bands,
+    }
+
+
+def _append_reason(existing: Optional[str], reason: str) -> str:
+    if not existing:
+        return reason
+    parts = [part.strip() for part in str(existing).split(";") if part.strip()]
+    if reason not in parts:
+        parts.append(reason)
+    return "; ".join(parts)
+
+
+def _statistical_rt_comparison(rt60_s: Optional[float], eyring_s: Optional[float], sabine_s: Optional[float]) -> Dict[str, Any]:
+    reference = eyring_s if eyring_s is not None else sabine_s
+    reference_name = "eyring_rt60_s" if eyring_s is not None else "sabine_rt60_s"
+    tolerance_s = None
+    relative_error = None
+    valid = False
+    if rt60_s is not None and reference is not None and reference > 0.0:
+        tolerance_s = max(_STATISTICAL_RT_ABS_TOLERANCE_S, _STATISTICAL_RT_REL_TOLERANCE * reference)
+        relative_error = abs(rt60_s - reference) / reference
+        valid = abs(rt60_s - reference) <= tolerance_s
+    return {
+        "valid": valid,
+        "reference": reference_name if reference is not None else None,
+        "eyring_rt60_s": eyring_s,
+        "sabine_rt60_s": sabine_s,
+        "rt60_s": rt60_s,
+        "relative_error": relative_error,
+        "relative_tolerance": _STATISTICAL_RT_REL_TOLERANCE,
+        "absolute_tolerance_s": _STATISTICAL_RT_ABS_TOLERANCE_S,
+        "tolerance_s": tolerance_s,
+        "reason": None if valid else "statistical_rt_mismatch",
+    }
+
+
+def _validate_decay_against_room_acoustics(decay: Dict[str, Any], room_acoustics: Dict[str, Any]) -> None:
+    if not room_acoustics.get("valid_for_rt_estimate"):
+        return
+    reference_by_band = {
+        float(row.get("band_hz")): row
+        for row in room_acoustics.get("octave_bands", [])
+        if row.get("band_hz") is not None
+    }
+    target_metric = str(decay.get("target_metric") or "t30").lower()
+    for band in decay.get("bands", []):
+        band_ref = reference_by_band.get(float(band.get("band_hz", -1.0)))
+        if not band_ref:
+            continue
+        eyring_s = band_ref.get("eyring_rt60_s")
+        sabine_s = band_ref.get("sabine_rt60_s")
+        comparisons = {}
+        for metric_key in _DECAY_TARGETS:
+            rt60_s = band.get(f"{metric_key}_s")
+            comparison = _statistical_rt_comparison(rt60_s, eyring_s, sabine_s)
+            comparisons[metric_key] = comparison
+            validity = band.get("metric_validity", {}).get(metric_key)
+            if validity and validity.get("valid") and not comparison["valid"]:
+                validity["valid"] = False
+                validity["reason"] = _append_reason(validity.get("reason"), "statistical_rt_mismatch")
+        band["statistical_rt_validation"] = comparisons
+        target_validity = band.get("metric_validity", {}).get(target_metric)
+        if target_validity is not None:
+            band["valid"] = bool(target_validity.get("valid"))
+            band["reason"] = target_validity.get("reason")
+            if not band["valid"]:
+                band["target_rt60_s"] = None
+    valid_band_count = sum(1 for band in decay.get("bands", []) if band.get("valid"))
+    decay["valid_band_count"] = valid_band_count
+    decay["valid"] = bool(decay.get("complete_within_time_radius")) and valid_band_count == len(decay.get("bands", [])) and bool(decay.get("bands"))
+    decay["statistical_validation"] = {
+        "reference": "eyring_rt60_s",
+        "secondary_reference": "sabine_rt60_s",
+        "relative_tolerance": _STATISTICAL_RT_REL_TOLERANCE,
+        "absolute_tolerance_s": _STATISTICAL_RT_ABS_TOLERANCE_S,
+        "scope": "Validation only; statistical formulas are not substituted for ISM-derived decay times.",
     }
 
 
@@ -1163,6 +1278,7 @@ def _run_borish_once(
     result_dict["diagnostics"]["two_sided_reflectors"] = bool(result.config.two_sided_reflectors)
     result_dict["diagnostics"]["open_mesh_diagnostic_run"] = bool(closure.get("diagnostic_open_mesh_run", False))
     result_dict["room_acoustics"] = _room_acoustics_estimate(result, scene, closure)
+    _validate_decay_against_room_acoustics(result_dict["ism_decay"], result_dict["room_acoustics"])
     if closure.get("diagnostic_open_mesh_run"):
         result_dict["diagnostics"]["validity"] = "diagnostic_open_mesh"
         result_dict["diagnostics"]["warning"] = (
@@ -1215,7 +1331,25 @@ def _auto_solve_borish_decay(
             best_complete_traversal = last
         decay = result_dict["ism_decay"]
         completeness = result_dict["diagnostics"]["completeness"]
+        target_metric = str(decay.get("target_metric") or decay_target).lower()
         min_decay = min((band.get("energy_dynamic_range_db", 0.0) for band in decay["bands"]), default=0.0)
+        target_horizons = [
+            float(validity["fit_validation_horizon_s"])
+            for band in decay["bands"]
+            for validity in [band.get("metric_validity", {}).get(target_metric)]
+            if validity
+            and validity.get("fit_validation_horizon_s") is not None
+            and math.isfinite(float(validity["fit_validation_horizon_s"]))
+        ]
+        required_time_s = max(target_horizons, default=None)
+        horizon_limited = any(
+            bool(band.get("metric_validity", {}).get(target_metric, {}).get("time_horizon_met") is False)
+            for band in decay["bands"]
+        )
+        statistical_limited = any(
+            "statistical_rt_mismatch" in str(band.get("metric_validity", {}).get(target_metric, {}).get("reason") or "")
+            for band in decay["bands"]
+        )
         iterations.append({
             "iteration": iteration_index + 1,
             "max_order": order,
@@ -1232,6 +1366,9 @@ def _auto_solve_borish_decay(
             "valid_band_count": decay["valid_band_count"],
             "band_count": decay["band_count"],
             "min_energy_dynamic_range_db": min_decay,
+            "required_time_s": required_time_s,
+            "horizon_limited": horizon_limited,
+            "statistical_limited": statistical_limited,
         })
 
         if decay["valid"]:
@@ -1249,12 +1386,22 @@ def _auto_solve_borish_decay(
             final_status = "borish_radius_not_exhausted"
             break
         if time_s < time_cap_s:
-            next_time_s = min(time_cap_s, max(time_s + 0.050, time_s * 1.5))
+            if horizon_limited and required_time_s is not None:
+                aimed_time_s = max(required_time_s * 1.05, required_time_s + 0.010)
+                next_time_s = min(time_cap_s, max(time_s + 0.050, aimed_time_s))
+            else:
+                next_time_s = min(time_cap_s, max(time_s + 0.050, time_s * 1.5))
             if next_time_s <= time_s + 1.0e-12:
                 final_status = "time_cap_exceeded"
                 break
             time_s = next_time_s
             continue
+        if horizon_limited:
+            final_status = "time_cap_exceeded"
+            break
+        if statistical_limited:
+            final_status = "statistical_validation_failed"
+            break
         final_status = "decay_depth_not_reached"
         break
 

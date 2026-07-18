@@ -39,7 +39,7 @@ const elements = {
 };
 
 const viewer = makeViewer(document.getElementById("viewport"));
-const worker = new Worker(new URL("./ismWorker.js?v=decay_horizon_guard_20260718", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./ismWorker.js?v=stat_rt_validation_20260719", import.meta.url), { type: "module" });
 
 let mesh = null;
 let lastSimulation = null;
@@ -93,7 +93,9 @@ function formatSeconds(value) {
 
 function formatDecayFitSeconds(decay, band, key) {
   if (!decay?.complete_within_time_radius) return "n/a";
-  if (key === decay?.target_metric && !band?.valid) return "n/a";
+  const metricValidity = band?.metric_validity?.[key];
+  if (metricValidity && !metricValidity.valid) return "n/a";
+  if (!metricValidity && key === decay?.target_metric && !band?.valid) return "n/a";
   const fit = band?.fits?.[key];
   if (!fit?.valid) return "n/a";
   return formatSeconds(band?.[`${key}_s`]);
