@@ -37,7 +37,7 @@ const elements = {
 };
 
 const viewer = makeViewer(document.getElementById("viewport"));
-const worker = new Worker(new URL("./ismWorker.js?v=room_metrics_20260718", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./ismWorker.js?v=ism_decay_20260718", import.meta.url), { type: "module" });
 
 let mesh = null;
 let lastSimulation = null;
@@ -66,30 +66,40 @@ function formatSeconds(value) {
   return number.toFixed(number < 10 ? 2 : 1);
 }
 
+function formatHz(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "n/a";
+  return number >= 1000 ? `${number / 1000}k` : String(number);
+}
+
 function renderRoomMetrics(result) {
-  const metrics = result?.room_acoustics;
+  const decay = result?.ism_decay;
+  const geometry = result?.room_acoustics;
   if (!elements.roomMetrics) return;
-  if (!metrics) {
-    elements.roomMetrics.textContent = "Room metrics appear after simulation.";
+  if (!decay) {
+    elements.roomMetrics.textContent = "Borish ISM decay metrics appear after simulation.";
     return;
   }
 
-  const rtRows = (metrics.octave_bands || []).map((band) => `
+  const rtRows = (decay.bands || []).map((band) => `
     <tr>
-      <th>${band.band_hz >= 1000 ? `${band.band_hz / 1000}k` : band.band_hz}</th>
-      <td>${formatSeconds(band.eyring_rt60_s)}</td>
-      <td>${formatSeconds(band.sabine_rt60_s)}</td>
-      <td>${Number(band.mean_absorption || 0).toFixed(2)}</td>
+      <th>${formatHz(band.band_hz)}</th>
+      <td>${formatSeconds(band.edt_s)}</td>
+      <td>${formatSeconds(band.t20_s)}</td>
+      <td>${formatSeconds(band.t30_s)}</td>
+      <td>${Number(band.energy_dynamic_range_db || 0).toFixed(1)}</td>
+      <td>${band.valid ? "valid" : (band.reason || "n/a")}</td>
     </tr>
   `).join("");
+  const validity = decay.valid ? "valid" : "not valid";
   elements.roomMetrics.innerHTML = `
     <div class="metric-strip">
-      <span>V ${Number(metrics.volume_m3 || 0).toFixed(1)} m3</span>
-      <span>S ${Number(metrics.surface_area_m2 || 0).toFixed(1)} m2</span>
-      <span>scatter ${Number(metrics.mean_scattering || 0).toFixed(2)}</span>
+      <span>Borish ISM decay: ${validity}</span>
+      <span>V ${Number(geometry?.volume_m3 || 0).toFixed(1)} m3</span>
+      <span>S ${Number(geometry?.surface_area_m2 || 0).toFixed(1)} m2</span>
     </div>
     <table class="metrics-table">
-      <thead><tr><th>Hz</th><th>Eyring RT60</th><th>Sabine RT60</th><th>alpha</th></tr></thead>
+      <thead><tr><th>Hz</th><th>EDT</th><th>T20</th><th>T30</th><th>range dB</th><th>status</th></tr></thead>
       <tbody>${rtRows}</tbody>
     </table>
   `;
@@ -1522,6 +1532,8 @@ worker.onmessage = (event) => {
       `rejected_obstruction=${result.stats.rejected_obstruction}`,
       `node_limit_hit=${result.stats.hit_node_limit}`,
       `complete_within_time_radius=${result.diagnostics.completeness?.complete_within_time_radius}`,
+      `ism_decay_valid=${result.ism_decay?.valid}`,
+      `ism_decay_complete=${result.ism_decay?.complete_within_time_radius}`,
       ...(result.diagnostics.completeness?.warnings || []).map((warning) => `WARNING: ${warning}`),
       orderText,
     ].join("\n"));

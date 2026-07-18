@@ -484,6 +484,159 @@ def _room_acoustics_estimate(result: SimulationResult, scene: Scene, closure: Di
     }
 
 
+def _linear_regression(xs: Sequence[float], ys: Sequence[float]) -> Optional[Tuple[float, float]]:
+    count = len(xs)
+    if count < 2 or count != len(ys):
+        return None
+    mean_x = sum(xs) / count
+    mean_y = sum(ys) / count
+    denominator = sum((x - mean_x) ** 2 for x in xs)
+    if denominator <= 0.0:
+        return None
+    slope = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys)) / denominator
+    intercept = mean_y - slope * mean_x
+    return slope, intercept
+
+
+def _schroeder_decay_fit(
+    times: Sequence[float],
+    decay_db: Sequence[float],
+    upper_db: float,
+    lower_db: float,
+) -> Dict[str, Any]:
+    selected = [
+        (time_s, db)
+        for time_s, db in zip(times, decay_db)
+        if lower_db <= db <= upper_db
+    ]
+    covered_upper = any(db <= upper_db for db in decay_db)
+    covered_lower = any(db <= lower_db for db in decay_db)
+    if len(selected) < 2 or not covered_upper or not covered_lower:
+        return {
+            "rt60_s": None,
+            "slope_db_per_s": None,
+            "fit_sample_count": len(selected),
+            "valid": False,
+            "reason": "insufficient_decay_range",
+        }
+
+    xs = [row[0] for row in selected]
+    ys = [row[1] for row in selected]
+    regression = _linear_regression(xs, ys)
+    if regression is None:
+        return {
+            "rt60_s": None,
+            "slope_db_per_s": None,
+            "fit_sample_count": len(selected),
+            "valid": False,
+            "reason": "degenerate_fit",
+        }
+    slope, intercept = regression
+    if slope >= 0.0:
+        return {
+            "rt60_s": None,
+            "slope_db_per_s": slope,
+            "intercept_db": intercept,
+            "fit_sample_count": len(selected),
+            "valid": False,
+            "reason": "non_decaying_fit",
+        }
+    return {
+        "rt60_s": -60.0 / slope,
+        "slope_db_per_s": slope,
+        "intercept_db": intercept,
+        "fit_sample_count": len(selected),
+        "valid": True,
+        "reason": None,
+    }
+
+
+def _ism_decay_estimate(result: SimulationResult, scene: Scene, completeness: Dict[str, Any]) -> Dict[str, Any]:
+    sample_rate = result.config.sample_rate
+    latest_event_s = max((max(0.0, event.arrival_time_relative_s) for event in result.events), default=0.0)
+    duration_s = max(result.config.max_time_s, latest_event_s)
+    sample_count = max(1, int(math.ceil(duration_s * sample_rate)) + 1)
+    complete = bool(completeness.get("complete_within_time_radius"))
+    bands = []
+
+    for band_index, band_hz in enumerate(OCTAVE_BANDS_HZ):
+        energy = [0.0] * sample_count
+        for event in result.events:
+            index = min(sample_count - 1, max(0, int(round(max(0.0, event.arrival_time_relative_s) * sample_rate))))
+            amplitude = _event_band_amplitude(event, scene, result, band_index)
+            energy[index] += amplitude * amplitude
+
+        schroeder = [0.0] * sample_count
+        running = 0.0
+        for index in range(sample_count - 1, -1, -1):
+            running += energy[index]
+            schroeder[index] = running
+
+        first_index = next((index for index, value in enumerate(energy) if value > 0.0), None)
+        if first_index is None:
+            bands.append({
+                "band_hz": band_hz,
+                "valid": False,
+                "reason": "no_ism_energy",
+                "energy_dynamic_range_db": 0.0,
+                "edt_s": None,
+                "t20_s": None,
+                "t30_s": None,
+            })
+            continue
+
+        reference_energy = schroeder[first_index]
+        times: List[float] = []
+        decay_db: List[float] = []
+        min_decay_db = 0.0
+        for index in range(first_index, sample_count):
+            value = schroeder[index]
+            if value <= 0.0:
+                continue
+            db = 10.0 * math.log10(value / reference_energy)
+            times.append(index / sample_rate)
+            decay_db.append(db)
+            min_decay_db = min(min_decay_db, db)
+
+        edt = _schroeder_decay_fit(times, decay_db, 0.0, -10.0)
+        t20 = _schroeder_decay_fit(times, decay_db, -5.0, -25.0)
+        t30 = _schroeder_decay_fit(times, decay_db, -5.0, -35.0)
+        band_valid = complete and (t30["valid"] or t20["valid"] or edt["valid"])
+        reasons = []
+        if not complete:
+            reasons.append("incomplete_borish_time_radius")
+        if not (t30["valid"] or t20["valid"] or edt["valid"]):
+            reasons.append("insufficient_decay_range")
+
+        bands.append({
+            "band_hz": band_hz,
+            "valid": band_valid,
+            "reason": "; ".join(reasons) if reasons else None,
+            "energy_dynamic_range_db": -min_decay_db,
+            "total_energy": reference_energy,
+            "first_energy_time_s": first_index / sample_rate,
+            "last_event_time_s": latest_event_s,
+            "edt_s": edt["rt60_s"],
+            "t20_s": t20["rt60_s"],
+            "t30_s": t30["rt60_s"],
+            "fits": {
+                "edt": edt,
+                "t20": t20,
+                "t30": t30,
+            },
+        })
+
+    return {
+        "method": "Borish image-source Schroeder decay",
+        "scope": "Computed from the deterministic octave-band image-source impulse responses only; no Sabine/Eyring late-field substitution is used here.",
+        "valid": complete and any(band["valid"] for band in bands),
+        "complete_within_time_radius": complete,
+        "sample_rate": sample_rate,
+        "duration_s": duration_s,
+        "bands": bands,
+    }
+
+
 def _result_to_dict(result: SimulationResult, scene: Scene, ir_scale: Optional[float]) -> Dict[str, Any]:
     direct_distance = math.dist(result.source, result.receiver)
     if result.config.time_reference == "direct":
@@ -573,6 +726,7 @@ def _result_to_dict(result: SimulationResult, scene: Scene, ir_scale: Optional[f
             ],
         })
     payload["analysis"] = _directional_analysis(result, scene)
+    payload["ism_decay"] = _ism_decay_estimate(result, scene, payload["diagnostics"]["completeness"])
     return payload
 
 
