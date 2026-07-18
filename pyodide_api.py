@@ -1114,13 +1114,14 @@ def _auto_solve_borish_decay(
     *,
     decay_target: str,
 ) -> Tuple[SimulationResult, List[float], float, Dict[str, Any], Dict[str, Any]]:
-    order_cap = max(0, int(options.get("max_order", 8)))
+    manual_order_ceiling = max(0, int(options.get("max_order", 8)))
+    search_order_ceiling = max(manual_order_ceiling, int(options.get("auto_order_ceiling", 24)))
     max_nodes = max(1, int(options.get("max_nodes", 250000)))
     initial_time_s = max(0.001, float(options.get("max_time_s", 0.120)))
     time_cap_s = max(initial_time_s, float(options.get("auto_max_time_s", 2.0)))
-    max_iterations = max(1, int(options.get("auto_max_iterations", 12)))
+    max_iterations = max(1, int(options.get("auto_max_iterations", 24)))
 
-    order = min(order_cap, max(0, int(options.get("initial_order", min(2, order_cap)))))
+    order = min(search_order_ceiling, max(0, int(options.get("initial_order", min(2, search_order_ceiling)))))
     time_s = initial_time_s
     iterations: List[Dict[str, Any]] = []
     final_status = "iteration_limit"
@@ -1169,10 +1170,10 @@ def _auto_solve_borish_decay(
                 last = best_complete_traversal
             break
         if not completeness["complete_within_time_radius"]:
-            if order < order_cap:
+            if order < search_order_ceiling:
                 order += 1
                 continue
-            final_status = "order_cap_exceeded"
+            final_status = "borish_radius_not_exhausted"
             break
         if time_s < time_cap_s:
             next_time_s = min(time_cap_s, max(time_s + 0.050, time_s * 1.5))
@@ -1180,7 +1181,7 @@ def _auto_solve_borish_decay(
                 final_status = "time_cap_exceeded"
                 break
             time_s = next_time_s
-            if order < order_cap:
+            if order < search_order_ceiling:
                 order += 1
             continue
         final_status = "decay_depth_not_reached"
@@ -1194,7 +1195,9 @@ def _auto_solve_borish_decay(
         "enabled": True,
         "status": final_status,
         "target_metric": decay_target,
-        "order_cap": order_cap,
+        "order_cap": search_order_ceiling,
+        "manual_order_ceiling": manual_order_ceiling,
+        "search_order_ceiling": search_order_ceiling,
         "node_cap": max_nodes,
         "initial_time_s": initial_time_s,
         "time_cap_s": time_cap_s,

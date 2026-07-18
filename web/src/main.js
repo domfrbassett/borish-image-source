@@ -112,7 +112,7 @@ function renderRoomMetrics(result) {
     <div class="metric-strip">
       <span>Borish ISM ${String(decay.target_metric || "t30").toUpperCase()}: ${validity}</span>
       <span>solver ${autoStatus}</span>
-      <span>order ${auto?.selected_max_order ?? result?.config?.max_order ?? "n/a"}</span>
+      <span>search order ${auto?.selected_max_order ?? result?.config?.max_order ?? "n/a"}</span>
       <span>time ${Number((auto?.selected_max_time_s ?? result?.config?.max_time_s ?? 0) * 1000).toFixed(0)} ms</span>
       <span>coverage ${decay.valid_band_count || 0}/${decay.band_count || 0}</span>
       <span>required ${Number(decay.required_decay_db || 0).toFixed(0)} dB</span>
@@ -170,7 +170,7 @@ function setDefaultShoeboxPoints() {
   document.getElementById("receiverX").value = 6;
   document.getElementById("receiverY").value = 5;
   document.getElementById("receiverZ").value = 1.2;
-  document.getElementById("maxOrder").value = 8;
+  document.getElementById("maxOrder").value = 12;
 }
 
 function setDefaultConcavePoints() {
@@ -180,7 +180,7 @@ function setDefaultConcavePoints() {
   document.getElementById("receiverX").value = 2;
   document.getElementById("receiverY").value = 8;
   document.getElementById("receiverZ").value = 1.2;
-  document.getElementById("maxOrder").value = 8;
+  document.getElementById("maxOrder").value = 12;
 }
 
 function updateMarkers() {
@@ -1563,6 +1563,8 @@ worker.onmessage = (event) => {
       `auto_solver=${result.auto_solver?.status}`,
       `auto_iterations=${result.auto_solver?.iterations?.length || 0}`,
       `auto_selected_order=${result.auto_solver?.selected_max_order ?? result.config.max_order}`,
+      `manual_order_ceiling=${result.auto_solver?.manual_order_ceiling ?? result.config.max_order}`,
+      `search_order_ceiling=${result.auto_solver?.search_order_ceiling ?? result.auto_solver?.order_cap ?? result.config.max_order}`,
       `auto_selected_time_ms=${Number((result.auto_solver?.selected_max_time_s ?? result.config.max_time_s) * 1000).toFixed(1)}`,
       `ism_decay_valid=${result.ism_decay?.valid}`,
       `ism_decay_complete=${result.ism_decay?.complete_within_time_radius}`,

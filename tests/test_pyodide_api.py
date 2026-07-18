@@ -128,11 +128,12 @@ class PyodideApiTests(unittest.TestCase):
         self.assertTrue(auto_solver["enabled"])
         self.assertIn("selected_max_order", auto_solver)
         self.assertIn("selected_max_time_s", auto_solver)
+        self.assertIn("search_order_ceiling", auto_solver)
         self.assertGreaterEqual(len(auto_solver["iterations"]), 1)
         self.assertIn(auto_solver["status"], {
             "target_satisfied",
             "node_budget_exceeded",
-            "order_cap_exceeded",
+            "borish_radius_not_exhausted",
             "time_cap_exceeded",
             "decay_depth_not_reached",
             "iteration_limit",
