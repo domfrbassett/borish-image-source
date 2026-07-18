@@ -14,6 +14,7 @@ const elements = {
   downloadDirectionalIr: document.getElementById("downloadDirectionalIr"),
   recordWebm: document.getElementById("recordWebm"),
   log: document.getElementById("log"),
+  roomMetrics: document.getElementById("roomMetrics"),
   toaTable: document.getElementById("toaTable"),
   irCanvas: document.getElementById("irCanvas"),
   surfaceStatus: document.getElementById("surfaceStatus"),
@@ -36,7 +37,7 @@ const elements = {
 };
 
 const viewer = makeViewer(document.getElementById("viewport"));
-const worker = new Worker(new URL("./ismWorker.js?v=borish_directional_ir_20260717", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./ismWorker.js?v=room_metrics_20260718", import.meta.url), { type: "module" });
 
 let mesh = null;
 let lastSimulation = null;
@@ -57,6 +58,41 @@ function log(message) {
 
 function appendLog(message) {
   elements.log.textContent += `\n${message}`;
+}
+
+function formatSeconds(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "n/a";
+  return number.toFixed(number < 10 ? 2 : 1);
+}
+
+function renderRoomMetrics(result) {
+  const metrics = result?.room_acoustics;
+  if (!elements.roomMetrics) return;
+  if (!metrics) {
+    elements.roomMetrics.textContent = "Room metrics appear after simulation.";
+    return;
+  }
+
+  const rtRows = (metrics.octave_bands || []).map((band) => `
+    <tr>
+      <th>${band.band_hz >= 1000 ? `${band.band_hz / 1000}k` : band.band_hz}</th>
+      <td>${formatSeconds(band.eyring_rt60_s)}</td>
+      <td>${formatSeconds(band.sabine_rt60_s)}</td>
+      <td>${Number(band.mean_absorption || 0).toFixed(2)}</td>
+    </tr>
+  `).join("");
+  elements.roomMetrics.innerHTML = `
+    <div class="metric-strip">
+      <span>V ${Number(metrics.volume_m3 || 0).toFixed(1)} m3</span>
+      <span>S ${Number(metrics.surface_area_m2 || 0).toFixed(1)} m2</span>
+      <span>scatter ${Number(metrics.mean_scattering || 0).toFixed(2)}</span>
+    </div>
+    <table class="metrics-table">
+      <thead><tr><th>Hz</th><th>Eyring RT60</th><th>Sabine RT60</th><th>alpha</th></tr></thead>
+      <tbody>${rtRows}</tbody>
+    </table>
+  `;
 }
 
 function readNumber(id) {
@@ -755,6 +791,7 @@ async function loadMesh(newMesh, name) {
   updateMarkers();
   lastSimulation = null;
   setDownloadsEnabled(false);
+  renderRoomMetrics(null);
   log(`Loaded ${name}
 vertices=${mesh.vertices.length}
 faces=${mesh.faces.length}
@@ -1434,6 +1471,7 @@ worker.onmessage = (event) => {
   } else if (type === "error") {
     log(`ERROR\n${event.data.error}\n${event.data.stack || ""}`);
     setDownloadsEnabled(false);
+    renderRoomMetrics(null);
   } else if (type === "check-complete") {
     const report = event.data.report;
     const lines = [
@@ -1461,6 +1499,7 @@ worker.onmessage = (event) => {
     viewer.showPaths(result.paths);
     viewer.animatePaths(result.paths, 9000);
     renderToaTable(lastSimulation.toa);
+    renderRoomMetrics(result);
     redrawSelectedIrView();
     setDownloadsEnabled(true);
     const orderCounts = new Map();

@@ -323,6 +323,46 @@ main {
   grid-column: 1 / -1;
 }
 
+.advanced-settings {
+  border: 1px solid var(--line);
+  background: #111820;
+  padding: 8px;
+}
+
+.advanced-settings summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.room-metrics {
+  margin: 8px 0 12px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  background: #0c1117;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: auto;
+}
+
+.metric-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 6px;
+  color: #d9e7f3;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
+.metrics-table {
+  font-size: 11px;
+}
+
+.metrics-table th,
+.metrics-table td {
+  padding: 4px 6px;
+}
+
 
 
 

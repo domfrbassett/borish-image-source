@@ -388,6 +388,102 @@ def scene_from_mesh_json(
     return Scene(triangles, patches), report
 
 
+def _triangle_area(a: Vec3, b: Vec3, c: Vec3) -> float:
+    return 0.5 * v_length(v_cross(v_sub(b, a), v_sub(c, a)))
+
+
+def _patch_area(scene: Scene, patch: ReflectorPatch) -> float:
+    return sum(
+        _triangle_area(triangle.a, triangle.b, triangle.c)
+        for triangle in scene.triangles
+        if triangle.patch_id == patch.id
+    )
+
+
+def _normalised_absorption_values(value: Any, fallback: Sequence[float]) -> Tuple[float, ...]:
+    try:
+        if isinstance(value, (int, float)):
+            values = [float(value)] * len(OCTAVE_BANDS_HZ)
+        else:
+            values = [float(v) for v in value]
+    except Exception:
+        values = [float(v) for v in fallback]
+
+    if len(values) == 1:
+        values = values * len(OCTAVE_BANDS_HZ)
+    if len(values) != len(OCTAVE_BANDS_HZ):
+        values = [float(v) for v in fallback]
+    return tuple(max(0.0, min(1.0, value)) for value in values)
+
+
+def _patch_material_absorption(patch: ReflectorPatch) -> Tuple[float, ...]:
+    raw_absorption = patch.metadata.get("input_absorption")
+    return _normalised_absorption_values(raw_absorption, patch.absorption)
+
+
+def _room_acoustics_estimate(result: SimulationResult, scene: Scene, closure: Dict[str, Any]) -> Dict[str, Any]:
+    volume_m3 = abs(float(closure.get("signed_volume_m3") or 0.0))
+    patch_rows: List[Dict[str, Any]] = []
+    equivalent_absorption = [0.0] * len(OCTAVE_BANDS_HZ)
+    surface_area = 0.0
+    scattering_area_sum = 0.0
+
+    for patch in scene.patches:
+        area = _patch_area(scene, patch)
+        absorption = _patch_material_absorption(patch)
+        surface_area += area
+        for band_index, alpha in enumerate(absorption):
+            equivalent_absorption[band_index] += area * alpha
+        scattering = float(patch.metadata.get("scattering") or 0.0)
+        scattering_area_sum += area * max(0.0, min(1.0, scattering))
+        patch_rows.append({
+            "patch_id": patch.id,
+            "area_m2": area,
+            "absorption": list(absorption),
+            "scattering": max(0.0, min(1.0, scattering)),
+            "metadata": patch.metadata,
+        })
+
+    mean_absorption = [
+        0.0 if surface_area <= 0.0 else value / surface_area
+        for value in equivalent_absorption
+    ]
+    sabine_rt60: List[Optional[float]] = []
+    eyring_rt60: List[Optional[float]] = []
+    for area_absorption, alpha_bar in zip(equivalent_absorption, mean_absorption):
+        sabine_rt60.append(None if volume_m3 <= 0.0 or area_absorption <= 0.0 else 0.161 * volume_m3 / area_absorption)
+        if volume_m3 <= 0.0 or surface_area <= 0.0 or alpha_bar <= 0.0:
+            eyring_rt60.append(None)
+        elif alpha_bar >= 1.0:
+            eyring_rt60.append(0.0)
+        else:
+            eyring_absorption = -surface_area * math.log(max(1.0e-12, 1.0 - alpha_bar))
+            eyring_rt60.append(0.161 * volume_m3 / eyring_absorption)
+
+    bands = []
+    for band_index, band_hz in enumerate(OCTAVE_BANDS_HZ):
+        bands.append({
+            "band_hz": band_hz,
+            "mean_absorption": mean_absorption[band_index],
+            "equivalent_absorption_area_m2": equivalent_absorption[band_index],
+            "sabine_rt60_s": sabine_rt60[band_index],
+            "eyring_rt60_s": eyring_rt60[band_index],
+        })
+
+    return {
+        "method": "closed-mesh statistical room-acoustic estimate",
+        "scope": "RT estimates are separate from the deterministic Borish image-source early-reflection tree; no diffuse late-reflection field is currently simulated.",
+        "valid_for_rt_estimate": bool(closure.get("closed")) and volume_m3 > 0.0 and surface_area > 0.0,
+        "volume_m3": volume_m3,
+        "surface_area_m2": surface_area,
+        "mean_scattering": 0.0 if surface_area <= 0.0 else scattering_area_sum / surface_area,
+        "rt60_formula_constant": 0.161,
+        "recommended_rt60": "eyring_rt60_s",
+        "octave_bands": bands,
+        "patches": patch_rows,
+    }
+
+
 def _result_to_dict(result: SimulationResult, scene: Scene, ir_scale: Optional[float]) -> Dict[str, Any]:
     direct_distance = math.dist(result.source, result.receiver)
     if result.config.time_reference == "direct":
@@ -766,6 +862,7 @@ def run_simulation_json(payload_json: str) -> str:
     result_dict["closure"] = closure
     result_dict["diagnostics"]["two_sided_reflectors"] = bool(result.config.two_sided_reflectors)
     result_dict["diagnostics"]["open_mesh_diagnostic_run"] = bool(closure.get("diagnostic_open_mesh_run", False))
+    result_dict["room_acoustics"] = _room_acoustics_estimate(result, scene, closure)
     if closure.get("diagnostic_open_mesh_run"):
         result_dict["diagnostics"]["validity"] = "diagnostic_open_mesh"
         result_dict["diagnostics"]["warning"] = (

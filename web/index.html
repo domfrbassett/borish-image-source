@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Borish Image Source Method — Browser Demo</title>
-  <link rel="stylesheet" href="./src/styles.css?v=plot_toggle_surfacefix_20260709">
+  <link rel="stylesheet" href="./src/styles.css?v=room_metrics_20260718">
   <script type="importmap">
   {
     "imports": {
@@ -105,7 +105,10 @@
 
         </fieldset>
 
-        <label>Max nodes <input id="maxNodes" type="number" min="1" value="250000"></label>
+        <details class="advanced-settings wide">
+          <summary>Advanced limits</summary>
+          <label>Node safety limit <input id="maxNodes" type="number" min="1" value="250000"></label>
+        </details>
         <p class="hint wide">All surfaces must have assigned material absorption before simulation.</p>
       </div>
 
@@ -113,6 +116,8 @@
         <button id="checkButton">Check closure</button>
         <button id="runButton">Run ISM</button>
       </div>
+
+      <div id="roomMetrics" class="room-metrics">Room metrics appear after simulation.</div>
 
       <h2>5. Downloads</h2>
       <div class="button-row downloads">
@@ -169,6 +174,6 @@
     <p>Based on Jeffrey Borish's arbitrary-polyhedron image-source algorithm.</p>
   </footer>
 
-  <script type="module" src="./src/main.js?v=polar_clean_20260718"></script>
+  <script type="module" src="./src/main.js?v=room_metrics_20260718"></script>
 </body>
 </html>

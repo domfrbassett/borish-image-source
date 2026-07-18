@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import sys
 import unittest
@@ -10,7 +11,7 @@ from pyodide_api import run_simulation_json  # noqa: E402
 
 
 class PyodideApiTests(unittest.TestCase):
-    def test_directional_sparse_ir_is_exported_without_fake_auralisation(self):
+    def _shoebox_payload(self):
         absorption = [0.05] * 8
         mesh = {
             "vertices": [
@@ -39,6 +40,10 @@ class PyodideApiTests(unittest.TestCase):
                 "air_attenuation_db_per_m": 0,
             },
         }
+        return payload
+
+    def test_directional_sparse_ir_is_exported_without_fake_auralisation(self):
+        payload = self._shoebox_payload()
 
         result = json.loads(run_simulation_json(json.dumps(payload)))
         self.assertIn("auralization", result)
@@ -53,6 +58,22 @@ class PyodideApiTests(unittest.TestCase):
         self.assertIn("sample_position", event)
         self.assertIn("source_relative_azimuth_deg", event)
         self.assertEqual(8, len(event["band_amplitudes"]))
+
+    def test_room_acoustic_rt_estimates_are_exported(self):
+        payload = self._shoebox_payload()
+
+        result = json.loads(run_simulation_json(json.dumps(payload)))
+        metrics = result["result"]["room_acoustics"]
+
+        self.assertTrue(metrics["valid_for_rt_estimate"])
+        self.assertAlmostEqual(30.0, metrics["volume_m3"])
+        self.assertAlmostEqual(59.0, metrics["surface_area_m2"])
+        first_band = metrics["octave_bands"][0]
+        self.assertAlmostEqual(0.05, first_band["mean_absorption"])
+        self.assertAlmostEqual(2.95, first_band["equivalent_absorption_area_m2"])
+        self.assertAlmostEqual(0.161 * 30.0 / 2.95, first_band["sabine_rt60_s"])
+        expected_eyring = 0.161 * 30.0 / (-59.0 * math.log(1.0 - 0.05))
+        self.assertAlmostEqual(expected_eyring, first_band["eyring_rt60_s"])
 
 
 if __name__ == "__main__":
