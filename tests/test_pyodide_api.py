@@ -105,6 +105,23 @@ class PyodideApiTests(unittest.TestCase):
         self.assertIn("last_event_time_s", impulse_response)
         self.assertGreater(len(impulse_response["warnings"]), 0)
 
+    def test_frequency_dependent_scattering_reduces_specular_band_amplitude(self):
+        payload = self._shoebox_payload()
+        scatter = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+        for face in payload["mesh"]["faces"]:
+            face["scattering"] = scatter
+
+        result = json.loads(run_simulation_json(json.dumps(payload)))
+        reflection = next(path for path in result["result"]["paths"] if path["order"] == 1)
+        ancestry = reflection["ancestry"][0]
+
+        self.assertEqual(scatter, ancestry["scattering"])
+        no_scatter_band_0 = reflection["band_amplitudes"][0]
+        scattered_band_7 = reflection["band_amplitudes"][7]
+        self.assertLess(scattered_band_7, no_scatter_band_0)
+        self.assertEqual(scatter, result["result"]["scene"]["patches"][0]["scattering"])
+        self.assertIn("mean_scattering_by_band", result["result"]["room_acoustics"])
+
     def test_coplanar_same_absorption_faces_are_one_reflector_patch(self):
         absorption = [0.05] * 8
         mesh = {

@@ -13,9 +13,11 @@ The implementation follows the main structure in Jeffrey Borish's 1984 paper:
 * reject paths whose reflection points miss their finite patches or whose real
   path segments are obstructed.
 
-This is a geometrical-acoustics early-reflection model.  It models specular
-reflection only; diffraction, diffuse scattering, phase changes, wave effects,
-and source/receiver directivity are outside its scope.
+This is a geometrical-acoustics early-reflection model.  It models coherent
+specular reflection only; diffraction, diffuse scattering, phase changes, wave
+effects, and source/receiver directivity are outside its scope.  Scattering
+coefficients, when supplied, are treated as frequency-dependent loss from the
+specular image-source component, not as generated diffuse reflection paths.
 """
 
 from __future__ import annotations
@@ -145,6 +147,7 @@ class ReflectorPatch:
     triangle_ids: Tuple[int, ...]
     absorption: Tuple[float, ...] = (0.05,) * 8
     metadata: Dict[str, Any] = field(default_factory=dict)
+    scattering: Tuple[float, ...] = (0.0,) * 8
 
     def __post_init__(self) -> None:
         self.normal = v_normalize(tuple(float(x) for x in self.normal))  # type: ignore[assignment]
@@ -153,14 +156,21 @@ class ReflectorPatch:
         elif len(self.absorption) != len(OCTAVE_BANDS_HZ):
             raise ValueError("Absorption must contain one value or eight octave-band values")
         self.absorption = tuple(min(1.0, max(0.0, float(a))) for a in self.absorption)
+        if len(self.scattering) == 1:
+            self.scattering = tuple(float(self.scattering[0]) for _ in OCTAVE_BANDS_HZ)
+        elif len(self.scattering) != len(OCTAVE_BANDS_HZ):
+            raise ValueError("Scattering must contain one value or eight octave-band values")
+        self.scattering = tuple(min(1.0, max(0.0, float(s))) for s in self.scattering)
 
     def reflection_pressure(self, band_index: Optional[int]) -> float:
-        """Return a pressure reflection coefficient from energy absorption."""
+        """Return the coherent specular pressure reflection coefficient."""
         if band_index is None:
             alpha = sum(self.absorption) / len(self.absorption)
+            scatter = sum(self.scattering) / len(self.scattering)
         else:
             alpha = self.absorption[band_index]
-        return math.sqrt(max(0.0, 1.0 - alpha))
+            scatter = self.scattering[band_index]
+        return math.sqrt(max(0.0, (1.0 - alpha) * (1.0 - scatter)))
 
 
 @dataclass
@@ -960,6 +970,7 @@ def save_ancestry_json(path: str, result: SimulationResult, scene: Scene, *, ir_
                     "offset": patch.offset,
                     "triangle_ids": list(patch.triangle_ids),
                     "absorption": list(patch.absorption),
+                    "scattering": list(patch.scattering),
                     "metadata": patch.metadata,
                 }
                 for patch in scene.patches
@@ -981,6 +992,7 @@ def save_ancestry_json(path: str, result: SimulationResult, scene: Scene, *, ir_
                 "patch_id": patch.id,
                 "metadata": patch.metadata,
                 "absorption": list(patch.absorption),
+                "scattering": list(patch.scattering),
             })
         payload["paths"].append({
             "path_id": event.path_id,
@@ -1060,7 +1072,7 @@ def save_result_bundle(output_base: str, result: SimulationResult, scene: Scene)
 # OBJ adapter (standalone / testing)
 # ---------------------------------------------------------------------------
 
-def _plane_group_key(normal: Vec3, offset: float, absorption: Sequence[float]) -> Tuple[Any, ...]:
+def _plane_group_key(normal: Vec3, offset: float, absorption: Sequence[float], scattering: Sequence[float]) -> Tuple[Any, ...]:
     scale = 1.0 / _PLANE_GROUP_TOLERANCE
     return (
         round(normal[0] * scale),
@@ -1068,6 +1080,7 @@ def _plane_group_key(normal: Vec3, offset: float, absorption: Sequence[float]) -
         round(normal[2] * scale),
         round(offset * scale),
         tuple(round(float(value), 10) for value in absorption),
+        tuple(round(float(value), 10) for value in scattering),
     )
 
 
@@ -1094,6 +1107,8 @@ def load_obj_scene(
     *,
     default_absorption: Sequence[float] = (0.05,) * 8,
     material_absorption: Optional[Dict[str, Sequence[float]]] = None,
+    default_scattering: Sequence[float] = (0.0,) * 8,
+    material_scattering: Optional[Dict[str, Sequence[float]]] = None,
     flip_normals: bool = False,
     planarity_tolerance: float = 1.0e-6,
 ) -> Scene:
@@ -1139,6 +1154,7 @@ def load_obj_scene(
         raise ValueError("OBJ contains no usable vertices/faces")
 
     material_absorption = material_absorption or {}
+    material_scattering = material_scattering or {}
     triangles: List[Triangle] = []
     patches: List[ReflectorPatch] = []
     triangle_id = 0
@@ -1154,11 +1170,14 @@ def load_obj_scene(
         offset = v_dot(face_points[0], normal)
         planar = all(abs(v_dot(point, normal) - offset) <= planarity_tolerance for point in face_points)
         alpha = tuple(material_absorption.get(material_name, default_absorption))
+        scatter = tuple(material_scattering.get(material_name, default_scattering))
         metadata = {
             "source": "obj",
             "object_name": object_name,
             "group_name": group_name,
             "material_name": material_name,
+            "absorption": alpha,
+            "scattering": scatter,
             "face_index": face_index,
         }
 
@@ -1177,13 +1196,14 @@ def load_obj_scene(
                     b, c = c, b
                 oriented_triangles.append((a, b, c))
             if oriented_triangles:
-                key = _plane_group_key(normal, offset, alpha)
+                key = _plane_group_key(normal, offset, alpha, scatter)
                 group = grouped_faces.setdefault(
                     key,
                     {
                         "normal": normal,
                         "offset": offset,
                         "absorption": alpha,
+                        "scattering": scatter,
                         "triangles": [],
                         "metadata": [],
                     },
@@ -1193,13 +1213,14 @@ def load_obj_scene(
         else:
             for local_triangle_index, (a, b, c) in enumerate(generated):
                 tri_normal = v_normalize(v_cross(v_sub(b, a), v_sub(c, a)))
-                key = _plane_group_key(tri_normal, v_dot(a, tri_normal), alpha) + (("nonplanar", face_index, local_triangle_index),)
+                key = _plane_group_key(tri_normal, v_dot(a, tri_normal), alpha, scatter) + (("nonplanar", face_index, local_triangle_index),)
                 group = grouped_faces.setdefault(
                     key,
                     {
                         "normal": tri_normal,
                         "offset": v_dot(a, tri_normal),
                         "absorption": alpha,
+                        "scattering": scatter,
                         "triangles": [],
                         "metadata": [],
                     },
@@ -1223,6 +1244,7 @@ def load_obj_scene(
                 triangle_ids=tuple(tri_ids),
                 absorption=group["absorption"],
                 metadata=_merged_obj_metadata(group["metadata"]),
+                scattering=group["scattering"],
             ))
 
     return Scene(triangles, patches)

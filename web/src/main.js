@@ -39,7 +39,7 @@ const elements = {
 };
 
 const viewer = makeViewer(document.getElementById("viewport"));
-const worker = new Worker(new URL("./ismWorker.js?v=decay_coverage_20260718", import.meta.url), { type: "module" });
+const worker = new Worker(new URL("./ismWorker.js?v=band_scattering_lroom_20260718", import.meta.url), { type: "module" });
 
 let mesh = null;
 let lastSimulation = null;
@@ -53,6 +53,28 @@ let isSyncingSurfaceUi = false;
 
 const OCTAVE_BANDS_HZ = [63, 125, 250, 500, 1000, 2000, 4000, 8000];
 const SURFACE_ABSORPTION_IDS = OCTAVE_BANDS_HZ.map((band) => `surfaceAbsorption${band}`);
+const SURFACE_SCATTERING_IDS = OCTAVE_BANDS_HZ.map((band) => `surfaceScattering${band}`);
+
+const L_ROOM_MATERIALS = {
+  Wall: {
+    surfaceName: "Painted plasterboard walls",
+    materialName: "Painted plasterboard",
+    absorption: [0.10, 0.08, 0.06, 0.05, 0.04, 0.05, 0.06, 0.08],
+    scattering: [0.02, 0.03, 0.04, 0.06, 0.08, 0.10, 0.12, 0.15],
+  },
+  Floor: {
+    surfaceName: "Carpeted floor",
+    materialName: "Medium carpet on slab",
+    absorption: [0.02, 0.06, 0.14, 0.37, 0.60, 0.65, 0.65, 0.70],
+    scattering: [0.03, 0.04, 0.06, 0.10, 0.14, 0.18, 0.22, 0.25],
+  },
+  Ceiling: {
+    surfaceName: "Acoustic tile ceiling",
+    materialName: "Suspended acoustic tile",
+    absorption: [0.30, 0.45, 0.70, 0.85, 0.80, 0.75, 0.70, 0.65],
+    scattering: [0.04, 0.05, 0.08, 0.12, 0.16, 0.20, 0.24, 0.28],
+  },
+};
 
 function log(message) {
   elements.log.textContent = message;
@@ -183,6 +205,33 @@ function setDefaultConcavePoints() {
   document.getElementById("receiverY").value = 8;
   document.getElementById("receiverZ").value = 1.2;
   document.getElementById("maxOrder").value = 12;
+}
+
+function lRoomMaterialProfile(face) {
+  const key = String(face?.material || face?.original_material || face?.group || "").toLowerCase();
+  if (key.includes("floor")) return L_ROOM_MATERIALS.Floor;
+  if (key.includes("ceiling")) return L_ROOM_MATERIALS.Ceiling;
+  return L_ROOM_MATERIALS.Wall;
+}
+
+function applyLRoomRealisticDefaults(targetMesh) {
+  const counts = { Wall: 0, Floor: 0, Ceiling: 0 };
+  for (const [index, face] of targetMesh.faces.entries()) {
+    const profile = lRoomMaterialProfile(face);
+    const importedSurfaceName = face.group || face.name || face.object || profile.surfaceName || `Face_${index}`;
+    setFaceAcousticProperties(
+      face,
+      profile.absorption,
+      profile.scattering,
+      importedSurfaceName,
+      profile.materialName
+    );
+    face.acoustic_preset = "l_room_realistic_defaults";
+    if (profile === L_ROOM_MATERIALS.Floor) counts.Floor += 1;
+    else if (profile === L_ROOM_MATERIALS.Ceiling) counts.Ceiling += 1;
+    else counts.Wall += 1;
+  }
+  return counts;
 }
 
 function updateMarkers() {
@@ -316,6 +365,19 @@ function normalizeAbsorptionBands(value, fallback = null) {
   return values.map((x) => Math.max(0, Math.min(1, x)));
 }
 
+function normalizeScatteringBands(value, fallback = null) {
+  let values = value;
+  if (values === undefined || values === null || values === "") {
+    if (fallback === null) return null;
+    values = fallback;
+  }
+  if (!Array.isArray(values)) values = [Number(values)];
+  values = values.map((x) => Number(x));
+  if (values.length === 1 && Number.isFinite(values[0])) values = Array(8).fill(values[0]);
+  if (values.length !== 8 || values.some((x) => !Number.isFinite(x) || x < 0 || x > 1)) return null;
+  return values.map((x) => Math.max(0, Math.min(1, x)));
+}
+
 function readSurfaceAbsorptionBands() {
   const bandValues = SURFACE_ABSORPTION_IDS.map((id) => {
     const element = document.getElementById(id);
@@ -343,6 +405,35 @@ function writeSurfaceAbsorptionBands(value) {
   }
   if (elements.surfaceAbsorption) {
     elements.surfaceAbsorption.value = averageAbsorption(bands, 0.05).toFixed(2);
+  }
+}
+
+function readSurfaceScatteringBands() {
+  const bandValues = SURFACE_SCATTERING_IDS.map((id) => {
+    const element = document.getElementById(id);
+    return element ? Number(element.value) : NaN;
+  });
+
+  if (bandValues.every((x) => Number.isFinite(x))) {
+    const normalized = normalizeScatteringBands(bandValues);
+    if (!normalized) throw new Error("Scattering bands must be eight values between 0 and 1.");
+    return normalized;
+  }
+
+  const scalar = document.getElementById("surfaceScattering")?.value;
+  const normalized = normalizeScatteringBands(Number(scalar), 0);
+  if (!normalized) throw new Error("Surface scattering must be between 0 and 1.");
+  return normalized;
+}
+
+function writeSurfaceScatteringBands(value) {
+  const bands = normalizeScatteringBands(value, 0) || Array(8).fill(0);
+  for (const [i, id] of SURFACE_SCATTERING_IDS.entries()) {
+    const element = document.getElementById(id);
+    if (element) element.value = bands[i].toFixed(2);
+  }
+  if (elements.surfaceScattering) {
+    elements.surfaceScattering.value = averageAbsorption(bands, 0).toFixed(2);
   }
 }
 
@@ -554,7 +645,7 @@ function selectedSurfaceInfo(faceIndex) {
 
   const face = mesh.faces[faceIndex];
   const absorption = averageAbsorption(face.absorption, 0.05);
-  const scattering = clamp01(face.scattering, 0);
+  const scattering = averageAbsorption(face.scattering, 0);
   const label = faceLabel(face, faceIndex);
   const vertices = face.indices ? face.indices.length : 0;
   const connectedCount = connectedCoplanarFaceIndices(faceIndex).length;
@@ -569,7 +660,7 @@ function selectedSurfaceInfo(faceIndex) {
     `connected_coplanar_apply_targets=${connectedCount}`,
     `active_selection_faces=1`,
     `absorption_avg=${averageAbsorption(absorption, 0.05).toFixed(3)}`,
-    `scattering=${scattering.toFixed(3)}`,
+    `scattering_avg=${scattering.toFixed(3)}`,
   ].join("\n");
 }
 
@@ -616,9 +707,7 @@ function syncSurfaceUiFromFace(face, faceIndex) {
 
     writeSurfaceAbsorptionBands(face.absorption);
 
-    if (elements.surfaceScattering) {
-      elements.surfaceScattering.value = clamp01(face.scattering, 0).toFixed(2);
-    }
+    writeSurfaceScatteringBands(face.scattering);
   } finally {
     isSyncingSurfaceUi = false;
   }
@@ -632,7 +721,7 @@ function persistCurrentSurfaceInputsToSelectedFace() {
   setFaceAcousticProperties(
     mesh.faces[selectedSurfaceIndex],
     readSurfaceAbsorptionBands(),
-    clamp01(elements.surfaceScattering?.value, 0),
+    readSurfaceScatteringBands(),
     elements.surfaceName?.value || "",
     elements.surfaceMaterialName?.value || ""
   );
@@ -681,7 +770,10 @@ function setFaceAcousticProperties(face, absorption, scattering, wallName, mater
     throw new Error("Absorption must be eight octave-band values between 0 and 1.");
   }
 
-  face.scattering = clamp01(scattering, 0);
+  face.scattering = normalizeScatteringBands(scattering, null);
+  if (!face.scattering) {
+    throw new Error("Scattering must be eight octave-band values between 0 and 1.");
+  }
 
   // Delete any old artificial grouping ID from previous broken versions.
   delete face.user_surface_id;
@@ -721,7 +813,7 @@ function applySurfaceProperties(mode) {
   }
 
   const absorption = readSurfaceAbsorptionBands();
-  const scattering = clamp01(elements.surfaceScattering?.value ?? 0, 0);
+  const scattering = readSurfaceScatteringBands();
   const wallName = elements.surfaceName?.value || "";
   const materialName = elements.surfaceMaterialName?.value || "";
   const originalClickedIndex = selectedSurfaceIndex;
@@ -798,7 +890,7 @@ function applySurfaceProperties(mode) {
   }
 
   appendLog(
-    `Applied name=${wallName || "(unchanged)"}, material=${materialName || "(unchanged)"}, absorption_avg=${averageAbsorption(absorption, 0.05).toFixed(3)}, scattering=${scattering.toFixed(3)} to ${indices.length} surface(s) using mode=${mode}. Rerun ISM to use these values.`
+    `Applied name=${wallName || "(unchanged)"}, material=${materialName || "(unchanged)"}, absorption_avg=${averageAbsorption(absorption, 0.05).toFixed(3)}, scattering_avg=${averageAbsorption(scattering, 0).toFixed(3)} to ${indices.length} surface(s) using mode=${mode}. Rerun ISM to use these values.`
   );
 }
 
@@ -812,7 +904,7 @@ viewer.setSurfaceSelectionHandler?.((faceIndex) => {
   }
 });
 
-async function loadMesh(newMesh, name) {
+async function loadMesh(newMesh, name, options = {}) {
   mesh = newMesh;
   userSurfaceCounter = 1;
   mesh.faces.forEach((face, index) => {
@@ -832,7 +924,7 @@ async function loadMesh(newMesh, name) {
 vertices=${mesh.vertices.length}
 faces=${mesh.faces.length}
 unassigned_material_surfaces=${findUnassignedSurfaces().length}
-Assign material coefficients to every surface before Run ISM.`);
+${options.presetMessage || "Assign material coefficients to every surface before Run ISM."}`);
 }
 
 function setDownloadsEnabled(enabled) {
@@ -1374,6 +1466,7 @@ function pathBandAmplitude(path, bandIndex, result) {
 
   for (const step of path.ancestry || []) {
     const absorption = step.absorption;
+    const scattering = step.scattering;
 
     let alpha = 0.05;
     if (Array.isArray(absorption) && absorption.length) {
@@ -1387,7 +1480,18 @@ function pathBandAmplitude(path, bandIndex, result) {
     }
 
     alpha = Math.max(0, Math.min(1, alpha));
-    reflectionGain *= Math.sqrt(Math.max(0, 1 - alpha));
+    let scatter = 0.0;
+    if (Array.isArray(scattering) && scattering.length) {
+      scatter = Number(scattering[bandIndex]);
+      if (!Number.isFinite(scatter)) {
+        const valid = scattering.map(Number).filter(Number.isFinite);
+        scatter = valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : 0.0;
+      }
+    } else if (Number.isFinite(Number(scattering))) {
+      scatter = Number(scattering);
+    }
+    scatter = Math.max(0, Math.min(1, scatter));
+    reflectionGain *= Math.sqrt(Math.max(0, (1 - alpha) * (1 - scatter)));
   }
 
   const airGain = airGainForBand(
@@ -1629,7 +1733,29 @@ for (const id of SURFACE_ABSORPTION_IDS) {
   });
 }
 
-for (const element of [elements.surfaceName, elements.surfaceMaterialName, elements.surfaceScattering]) {
+if (elements.surfaceScattering) {
+  elements.surfaceScattering.addEventListener("input", () => {
+    const value = Number(elements.surfaceScattering.value);
+    if (Number.isFinite(value)) {
+      writeSurfaceScatteringBands(Array(8).fill(value));
+      persistCurrentSurfaceInputsToSelectedFace();
+    }
+  });
+}
+
+for (const id of SURFACE_SCATTERING_IDS) {
+  const element = document.getElementById(id);
+  if (!element) continue;
+  element.addEventListener("input", () => {
+    const bands = readSurfaceScatteringBands();
+    if (elements.surfaceScattering) {
+      elements.surfaceScattering.value = averageAbsorption(bands, 0).toFixed(2);
+    }
+    persistCurrentSurfaceInputsToSelectedFace();
+  });
+}
+
+for (const element of [elements.surfaceName, elements.surfaceMaterialName]) {
   if (!element) continue;
   element.addEventListener("input", persistCurrentSurfaceInputsToSelectedFace);
 }
@@ -1672,7 +1798,11 @@ elements.loadShoebox.addEventListener("click", async () => {
 
 elements.loadConcave.addEventListener("click", async () => {
   setDefaultConcavePoints();
-  await loadMesh(await loadExampleObj("./examples/concave_l_room.obj"), "concave_l_room.obj");
+  const lRoomMesh = await loadExampleObj("./examples/concave_l_room.obj");
+  const counts = applyLRoomRealisticDefaults(lRoomMesh);
+  await loadMesh(lRoomMesh, "concave_l_room.obj", {
+    presetMessage: `L-room realistic defaults applied: walls=${counts.Wall}, floors=${counts.Floor}, ceilings=${counts.Ceiling}. Ready to Run ISM.`,
+  });
 });
 
 elements.checkButton.addEventListener("click", () => {

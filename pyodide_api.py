@@ -130,9 +130,10 @@ def _face_metadata(face: Any, index: int) -> Dict[str, Any]:
     )
     material_name = face.get("acoustic_material") or face.get("material") or "Default"
     try:
-        scattering = _face_scattering(face)
+        scattering_bands = _face_scattering(face)
     except Exception:
-        scattering = face.get("scattering", 0.0)
+        scattering_bands = (0.0,) * len(OCTAVE_BANDS_HZ)
+    scattering_average = sum(scattering_bands) / len(scattering_bands)
 
     return {
         "source": "browser",
@@ -147,19 +148,29 @@ def _face_metadata(face: Any, index: int) -> Dict[str, Any]:
         "original_group": face.get("original_group"),
         "original_material": face.get("original_material"),
         "input_absorption": face.get("absorption"),
-        "scattering": scattering,
+        "input_scattering": face.get("scattering_bands", face.get("scattering", face.get("scatter"))),
+        "scattering": scattering_average,
+        "scattering_bands": list(scattering_bands),
     }
 
 
-def _face_scattering(face: Any) -> float:
+def _face_scattering(face: Any) -> Tuple[float, ...]:
     if isinstance(face, dict):
-        value = face.get("scattering", face.get("scatter", 0.0))
+        value = face.get("scattering_bands", face.get("scattering", face.get("scatter", 0.0)))
     else:
         value = 0.0
     try:
-        return max(0.0, min(1.0, float(value)))
+        if isinstance(value, (int, float)):
+            values = [float(value)] * len(OCTAVE_BANDS_HZ)
+        else:
+            values = [float(v) for v in value]
     except Exception:
-        return 0.0
+        values = [0.0] * len(OCTAVE_BANDS_HZ)
+    if len(values) == 1:
+        values = values * len(OCTAVE_BANDS_HZ)
+    if len(values) != len(OCTAVE_BANDS_HZ):
+        values = [0.0] * len(OCTAVE_BANDS_HZ)
+    return tuple(max(0.0, min(1.0, value)) for value in values)
 
 
 def _face_absorption(face: Any, default_absorption: Sequence[float]) -> Tuple[float, ...]:
@@ -180,12 +191,7 @@ def _face_absorption(face: Any, default_absorption: Sequence[float]) -> Tuple[fl
         values = values * len(OCTAVE_BANDS_HZ)
     if len(values) != len(OCTAVE_BANDS_HZ):
         raise ValueError("Absorption must be one value or eight octave-band values")
-    base_absorption = tuple(max(0.0, min(1.0, value)) for value in values)
-    scattering = _face_scattering(face)
-    # Scattering is treated as specular energy loss for this minimal ISM.
-    # Effective retained specular energy = (1 - absorption) * (1 - scattering).
-    # Therefore alpha_eff = 1 - retained_specular_energy.
-    return tuple(1.0 - (1.0 - alpha) * (1.0 - scattering) for alpha in base_absorption)
+    return tuple(max(0.0, min(1.0, value)) for value in values)
 
 
 def _polygon_normal(vertices: Sequence[Vec3], indices: Sequence[int]) -> Vec3:
@@ -220,7 +226,7 @@ def _triangulate_face(indices: Sequence[int], flip: bool = False) -> Iterable[Tu
         yield tri
 
 
-def _plane_group_key(normal: Vec3, offset: float, absorption: Sequence[float]) -> Tuple[Any, ...]:
+def _plane_group_key(normal: Vec3, offset: float, absorption: Sequence[float], scattering: Sequence[float]) -> Tuple[Any, ...]:
     scale = 1.0 / _PLANE_GROUP_TOLERANCE
     return (
         round(normal[0] * scale),
@@ -228,6 +234,7 @@ def _plane_group_key(normal: Vec3, offset: float, absorption: Sequence[float]) -
         round(normal[2] * scale),
         round(offset * scale),
         tuple(round(float(value), 10) for value in absorption),
+        tuple(round(float(value), 10) for value in scattering),
     )
 
 
@@ -391,13 +398,15 @@ def scene_from_mesh_json(
         normal = _polygon_normal(vertices, local_indices)
         offset = v_dot(vertices[local_indices[0]], normal)
         absorption = _face_absorption(raw_face, default_absorption)
-        key = _plane_group_key(normal, offset, absorption)
+        scattering = _face_scattering(raw_face)
+        key = _plane_group_key(normal, offset, absorption, scattering)
         group = grouped_faces.setdefault(
             key,
             {
                 "normal": normal,
                 "offset": offset,
                 "absorption": absorption,
+                "scattering": scattering,
                 "faces": [],
                 "metadata": [],
             },
@@ -431,6 +440,7 @@ def scene_from_mesh_json(
                 triangle_ids=tuple(patch_triangle_ids),
                 absorption=group["absorption"],
                 metadata=_merged_patch_metadata(group["metadata"]),
+                scattering=group["scattering"],
             )
         )
 
@@ -469,37 +479,51 @@ def _normalised_absorption_values(value: Any, fallback: Sequence[float]) -> Tupl
     return tuple(max(0.0, min(1.0, value)) for value in values)
 
 
+def _normalised_scattering_values(value: Any, fallback: Sequence[float]) -> Tuple[float, ...]:
+    return _normalised_absorption_values(value, fallback)
+
+
 def _patch_material_absorption(patch: ReflectorPatch) -> Tuple[float, ...]:
     raw_absorption = patch.metadata.get("input_absorption")
     return _normalised_absorption_values(raw_absorption, patch.absorption)
+
+
+def _patch_material_scattering(patch: ReflectorPatch) -> Tuple[float, ...]:
+    raw_scattering = patch.metadata.get("input_scattering", patch.metadata.get("scattering_bands"))
+    return _normalised_scattering_values(raw_scattering, patch.scattering)
 
 
 def _room_acoustics_estimate(result: SimulationResult, scene: Scene, closure: Dict[str, Any]) -> Dict[str, Any]:
     volume_m3 = abs(float(closure.get("signed_volume_m3") or 0.0))
     patch_rows: List[Dict[str, Any]] = []
     equivalent_absorption = [0.0] * len(OCTAVE_BANDS_HZ)
+    equivalent_scattering = [0.0] * len(OCTAVE_BANDS_HZ)
     surface_area = 0.0
-    scattering_area_sum = 0.0
 
     for patch in scene.patches:
         area = _patch_area(scene, patch)
         absorption = _patch_material_absorption(patch)
+        scattering = _patch_material_scattering(patch)
         surface_area += area
         for band_index, alpha in enumerate(absorption):
             equivalent_absorption[band_index] += area * alpha
-        scattering = float(patch.metadata.get("scattering") or 0.0)
-        scattering_area_sum += area * max(0.0, min(1.0, scattering))
+            equivalent_scattering[band_index] += area * scattering[band_index]
         patch_rows.append({
             "patch_id": patch.id,
             "area_m2": area,
             "absorption": list(absorption),
-            "scattering": max(0.0, min(1.0, scattering)),
+            "scattering": sum(scattering) / len(scattering),
+            "scattering_bands": list(scattering),
             "metadata": patch.metadata,
         })
 
     mean_absorption = [
         0.0 if surface_area <= 0.0 else value / surface_area
         for value in equivalent_absorption
+    ]
+    mean_scattering = [
+        0.0 if surface_area <= 0.0 else value / surface_area
+        for value in equivalent_scattering
     ]
     sabine_rt60: List[Optional[float]] = []
     eyring_rt60: List[Optional[float]] = []
@@ -529,7 +553,8 @@ def _room_acoustics_estimate(result: SimulationResult, scene: Scene, closure: Di
         "valid_for_rt_estimate": bool(closure.get("closed")) and volume_m3 > 0.0 and surface_area > 0.0,
         "volume_m3": volume_m3,
         "surface_area_m2": surface_area,
-        "mean_scattering": 0.0 if surface_area <= 0.0 else scattering_area_sum / surface_area,
+        "mean_scattering": 0.0 if not mean_scattering else sum(mean_scattering) / len(mean_scattering),
+        "mean_scattering_by_band": mean_scattering,
         "rt60_formula_constant": 0.161,
         "recommended_rt60": "eyring_rt60_s",
         "octave_bands": bands,
@@ -765,6 +790,7 @@ def _result_to_dict(
                     "offset": patch.offset,
                     "triangle_ids": list(patch.triangle_ids),
                     "absorption": list(patch.absorption),
+                    "scattering": list(patch.scattering),
                     "metadata": patch.metadata,
                 }
                 for patch in scene.patches
@@ -799,6 +825,7 @@ def _result_to_dict(
                 "patch_id": patch.id,
                 "metadata": patch.metadata,
                 "absorption": list(patch.absorption),
+                "scattering": list(patch.scattering),
             })
         payload["paths"].append({
             "path_id": event.path_id,

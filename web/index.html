@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Borish Image Source Method — Browser Demo</title>
-  <link rel="stylesheet" href="./src/styles.css?v=ism_decay_20260718">
+  <link rel="stylesheet" href="./src/styles.css?v=band_scattering_lroom_20260718">
   <script type="importmap">
   {
     "imports": {
@@ -52,7 +52,7 @@
       
 
       <h2>3. Surface material</h2>
-      <p class="hint">Click a surface in the 3D viewer, then rename it and assign octave-band absorption. Selecting 'apply connected plane' groups coplanar triangles that share edges, so a triangulated wall can be named and edited once.</p>
+      <p class="hint">Click a surface in the 3D viewer, then rename it and assign octave-band absorption and scattering. Selecting 'apply connected plane' groups coplanar triangles that share edges, so a triangulated wall can be named and edited once.</p>
       <div id="surfaceStatus" class="surface-status">No surface selected.</div>
       <div class="settings surface-settings">
         <label>Wall / plane name <input id="surfaceName" type="text" placeholder="e.g. North wall"></label>
@@ -68,7 +68,17 @@
           <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">4k</span><span class="abs-band-unit">Hz</span></span><input id="surfaceAbsorption4000" type="number" min="0" max="1" step="0.01" value="0.05"></label>
           <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">8k</span><span class="abs-band-unit">Hz</span></span><input id="surfaceAbsorption8000" type="number" min="0" max="1" step="0.01" value="0.05"></label>
         </div>
-        <label>Scattering <input id="surfaceScattering" type="number" min="0" max="1" step="0.01" value="0"></label>
+        <label>Set all scattering bands <input id="surfaceScattering" type="number" min="0" max="1" step="0.01" value="0"></label>
+        <div class="octave-scattering-grid octave-band-grid" aria-label="Octave-band scattering coefficients">
+          <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">63</span><span class="abs-band-unit">Hz</span></span><input id="surfaceScattering63" type="number" min="0" max="1" step="0.01" value="0"></label>
+          <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">125</span><span class="abs-band-unit">Hz</span></span><input id="surfaceScattering125" type="number" min="0" max="1" step="0.01" value="0"></label>
+          <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">250</span><span class="abs-band-unit">Hz</span></span><input id="surfaceScattering250" type="number" min="0" max="1" step="0.01" value="0"></label>
+          <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">500</span><span class="abs-band-unit">Hz</span></span><input id="surfaceScattering500" type="number" min="0" max="1" step="0.01" value="0"></label>
+          <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">1k</span><span class="abs-band-unit">Hz</span></span><input id="surfaceScattering1000" type="number" min="0" max="1" step="0.01" value="0"></label>
+          <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">2k</span><span class="abs-band-unit">Hz</span></span><input id="surfaceScattering2000" type="number" min="0" max="1" step="0.01" value="0"></label>
+          <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">4k</span><span class="abs-band-unit">Hz</span></span><input id="surfaceScattering4000" type="number" min="0" max="1" step="0.01" value="0"></label>
+          <label class="abs-band-cell"><span class="abs-band-label"><span class="abs-band-number">8k</span><span class="abs-band-unit">Hz</span></span><input id="surfaceScattering8000" type="number" min="0" max="1" step="0.01" value="0"></label>
+        </div>
       </div>
       <div class="button-row surface-actions">
         <button id="applySurfaceSelected" disabled>Apply selected</button>
@@ -183,6 +193,6 @@
     <p>Based on Jeffrey Borish's arbitrary-polyhedron image-source algorithm.</p>
   </footer>
 
-  <script type="module" src="./src/main.js?v=borish_decay_margin_20260718"></script>
+  <script type="module" src="./src/main.js?v=band_scattering_lroom_20260718"></script>
 </body>
 </html>

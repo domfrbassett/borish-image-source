@@ -301,7 +301,8 @@ main {
 
 
 /* ---- Required materials + broadband IR patch ---- */
-.octave-absorption-grid {
+.octave-absorption-grid,
+.octave-scattering-grid {
   grid-column: 1 / -1;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -311,11 +312,13 @@ main {
   background: #0c1117;
 }
 
-.octave-absorption-grid label {
+.octave-absorption-grid label,
+.octave-scattering-grid label {
   font-size: 0.78rem;
 }
 
-.octave-absorption-grid input {
+.octave-absorption-grid input,
+.octave-scattering-grid input {
   width: 100%;
 }
 
@@ -385,7 +388,8 @@ fieldset,
 }
 
 /* The octave-band editor must fit inside the left column. */
-.octave-absorption-grid {
+.octave-absorption-grid,
+.octave-scattering-grid {
   grid-column: 1 / -1 !important;
   width: 100% !important;
   max-width: 100% !important;
@@ -405,7 +409,9 @@ fieldset,
 
 /* Each band is a small fixed internal layout, but the cell itself can shrink. */
 .octave-absorption-grid .abs-band-cell,
-.octave-absorption-grid label {
+.octave-absorption-grid label,
+.octave-scattering-grid .abs-band-cell,
+.octave-scattering-grid label {
   min-width: 0 !important;
   max-width: 100% !important;
   box-sizing: border-box !important;
@@ -425,7 +431,8 @@ fieldset,
 }
 
 /* Label block: 125 over Hz, without stealing width from the numeric input. */
-.octave-absorption-grid .abs-band-label {
+.octave-absorption-grid .abs-band-label,
+.octave-scattering-grid .abs-band-label {
   display: flex !important;
   flex-direction: column !important;
   justify-content: center !important;
@@ -437,7 +444,8 @@ fieldset,
   overflow: hidden !important;
 }
 
-.octave-absorption-grid .abs-band-number {
+.octave-absorption-grid .abs-band-number,
+.octave-scattering-grid .abs-band-number {
   display: block !important;
   font-size: 0.92rem !important;
   font-weight: 600 !important;
@@ -445,7 +453,8 @@ fieldset,
   white-space: nowrap !important;
 }
 
-.octave-absorption-grid .abs-band-unit {
+.octave-absorption-grid .abs-band-unit,
+.octave-scattering-grid .abs-band-unit {
   display: block !important;
   margin-top: 3px !important;
   font-size: 0.68rem !important;
@@ -456,7 +465,8 @@ fieldset,
 }
 
 /* Wider input so 0.05 is actually visible. */
-.octave-absorption-grid input[type="number"] {
+.octave-absorption-grid input[type="number"],
+.octave-scattering-grid input[type="number"] {
   width: 100% !important;
   min-width: 78px !important;
   max-width: 100% !important;
@@ -476,16 +486,20 @@ fieldset,
 
 /* Very narrow panels: one clean column rather than horizontal scrolling. */
 @media (max-width: 520px) {
-  .octave-absorption-grid {
+  .octave-absorption-grid,
+  .octave-scattering-grid {
     grid-template-columns: 1fr !important;
   }
 
   .octave-absorption-grid .abs-band-cell,
-  .octave-absorption-grid label {
+  .octave-absorption-grid label,
+  .octave-scattering-grid .abs-band-cell,
+  .octave-scattering-grid label {
     grid-template-columns: 54px minmax(96px, 1fr) !important;
   }
 
-  .octave-absorption-grid input[type="number"] {
+  .octave-absorption-grid input[type="number"],
+  .octave-scattering-grid input[type="number"] {
     min-width: 96px !important;
   }
 }
